@@ -29,8 +29,11 @@ async def test_agent(command: str, mode: AgentMode = AgentMode.FAST):
         sys.exit(1)
     
     # Initialize components with LangChain + Windows-MCP
-    print("🤖 Initializing Echo...")
-    print("   (Make sure Windows-MCP server is running on http://localhost:8000)")
+    from src.utils.ui import print_header, console, custom_theme
+    
+    print_header("Initializing Echo...", "Starting Windows-MCP & Gemini Connection")
+    
+    console.print("[dim]   (Make sure Windows-MCP server is running on http://localhost:8000)[/dim]")
     
     thinking_logger = ThinkingLogger()
     
@@ -40,49 +43,132 @@ async def test_agent(command: str, mode: AgentMode = AgentMode.FAST):
         mode=mode
     )
     
+    import traceback
+    
     # Initialize agent (connect to MCP, load tools)
     try:
-        await agent.initialize()
+        with console.status("[bold #D946EF]Connecting to Desktop...[/]", spinner="dots"):
+            await agent.initialize()
+        console.print("[success]✓ Agent initialized successfully[/success]")
     except Exception as e:
-        print(f"\n❌ Failed to initialize agent: {e}")
-        print("\n💡 Make sure Windows-MCP server is running:")
-        print("   uvx windows-mcp --transport streamable-http --port 8000")
+        error_msg = str(e)
+        if "TaskGroup" in error_msg or "ConnectError" in error_msg:
+            # Check for connection error details
+            console.print("\n[error]❌ Connection Failed[/error]")
+            console.print("[dim]   Could not connect to Windows-MCP server at http://localhost:8000[/dim]")
+            
+            from rich.panel import Panel
+            console.print(Panel(
+                "[bold yellow]1. Check Server:[/bold yellow] Is the terminal window open?\n"
+                "[bold yellow]2. Restart:[/bold yellow] Stop (Ctrl+C) and run:\n"
+                "   [bold white]uvx windows-mcp --transport streamable-http --port 8000[/bold white]",
+                title="[bold red]Server Not Reachable[/bold red]",
+                border_style="red"
+            ))
+        else:
+            console.print(f"\n[error]❌ Failed to initialize: {e}[/error]")
+            console.print("[dim]Traceback available in logs[/dim]")
+            
         sys.exit(1)
-        
+    
+    result = {} # Initialize to avoid unbound error in finally
     try:
         if mode == AgentMode.VOICE:
-            print("\n🎙️ Starting Voice Mode (Gemini Live)...")
-            print("   Using Model: " + agent.config.model_name)
-            print("   Speak into your microphone. Press Ctrl+C to stop.")
-            await agent.run_voice_session()
+            # Use Advanced TUI for Voice
+            from src.utils.tui import EchoTUI
+            tui = EchoTUI()
+            
+            # Callback to update TUI from Logger
+            def log_callback(type_: str, message: str):
+                if type_ == "thought":
+                    tui.add_thought(message)
+                else:
+                    style = "white"
+                    if type_ == "error": style = "red"
+                    if type_ == "result": style = "green"
+                    tui.add_log(message, style)
+            
+            thinking_logger = ThinkingLogger(ui_callback=log_callback)
+            
+            # Re-init agent with new logger
+            agent = DesktopAgent(
+                gemini_api_key=gemini_api_key,
+                thinking_logger=thinking_logger,
+                mode=mode
+            )
+            
+            # Re-init agent connection for Voice Mode (since we created a new instance)
+            try:
+                # simple connection check before starting TUI
+                from src.utils.ui import console
+                try:
+                    with console.status("[bold #D946EF]Connecting to Desktop...[/]", spinner="dots"):
+                        await agent.initialize()
+                except Exception as e:
+                    console.print(f"\n[error]❌ Failed to initialize agent: {e}[/error]")
+                    sys.exit(1)
+                
+                tui.set_listening(True) # Assume listening start
+                
+                async with asyncio.TaskGroup() as tg:
+                    tg.create_task(tui.start())
+                    
+                    # Agent Task
+                    async def run_agent():
+                        try:
+                            tui.add_log("✓ Agent Connected", "green")
+                            tui.add_thought("Starting Voice Session...")
+                            await agent.run_voice_session()
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            tui.add_log(f"Error: {e}", "red")
+                            tui.stop_event.set()
+                        finally:
+                            tui.stop_event.set()
+                            
+                    tg.create_task(run_agent())
+                    
+            except KeyboardInterrupt:
+                pass
+            except Exception as e:
+                print(f"Error: {e}")
+                
         else:
             if not command:
-                print("❌ Error: --command is required for fast mode")
-                print("   Use --mode voice for voice interaction")
+                console.print("[error]❌ Error: --command is required for fast mode[/error]")
+                console.print("   Use [bold]--mode voice[/bold] for voice interaction")
                 return
 
-            print(f"\n🎯 Executing: {command}\n")
-            print("="*60)
+            print_header("Executing Command", command)
             
             # Execute task
-            result = await agent.execute_task(command)
+            with console.status("[bold #8B5CF6]Thinking...[/]", spinner="dots"):
+                result = await agent.execute_task(command)
             
-            print("="*60)
-            print("\n📊 FINAL RESULT:")
-            print(f"   Success: {result.get('success')}")
-            print(f"   Message: {result.get('message', result.get('error'))}")
+            from rich.panel import Panel
+            
+            success = result.get('success', False)
+            message = result.get('message', result.get('error', 'Unknown result'))
+            
+            style = "success" if success else "error"
+            title = "Task Completed" if success else "Task Failed"
+            
+            console.print(Panel(
+                message,
+                title=f"[bold {style}]{title}[/]",
+                border_style="#D946EF"
+            ))
             
     except KeyboardInterrupt:
-        print("\n👋 Stopped by user")
+        console.print("\n[dim]👋 Stopped by user[/dim]")
     except Exception as e:
-        print(f"\n❌ Error during execution: {e}")
+        console.print(f"\n[error]❌ Error during execution: {e}[/error]")
     finally:
         await agent.cleanup()
-        print(f"\n📋 Saved trace to: agent_trace.json")
-        thinking_logger.save_to_file("agent_trace.json")
-    
-    # Cleanup
-    await agent.cleanup()
+        if result and result.get('trace'):
+            console.print(f"\n[dim]📋 Saved trace to: agent_trace.json[/dim]")
+            thinking_logger.save_to_file("agent_trace.json")
 
 
 

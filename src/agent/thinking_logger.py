@@ -19,26 +19,19 @@ class EventType(Enum):
     RESULT = "result"
 
 
+from src.utils.ui import print_thought, print_action, print_observation, print_error, print_result
+
 class ThinkingLogger:
     """Logger for agent thinking trace"""
     
-    def __init__(self):
+    def __init__(self, ui_callback=None):
         """Initialize thinking logger"""
         self.events: List[Dict[str, Any]] = []
         self.event_queue: asyncio.Queue = asyncio.Queue()
+        self.ui_callback = ui_callback
         
     def _create_event(self, event_type: EventType, content: Any, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
-        """
-        Create a thinking event
-        
-        Args:
-            event_type: Type of event
-            content: Event content
-            metadata: Additional metadata
-            
-        Returns:
-            Event dictionary
-        """
+        """Create a thinking event"""
         event = {
             "type": event_type.value,
             "content": content,
@@ -48,32 +41,21 @@ class ThinkingLogger:
         return event
     
     def log_thought(self, message: str, metadata: Dict[str, Any] = None) -> None:
-        """
-        Log an agent thought
-        
-        Args:
-            message: Thought message
-            metadata: Additional metadata
-        """
+        """Log an agent thought"""
         event = self._create_event(EventType.THOUGHT, message, metadata)
         self.events.append(event)
-        # Non-blocking queue put
         try:
             self.event_queue.put_nowait(event)
         except asyncio.QueueFull:
             pass
         
-        print(f"💭 {message}")
+        if self.ui_callback:
+            self.ui_callback("thought", message)
+        else:
+            print_thought(message)
     
     def log_action(self, tool_name: str, params: Dict[str, Any], metadata: Dict[str, Any] = None) -> None:
-        """
-        Log an agent action
-        
-        Args:
-            tool_name: Name of the tool being called
-            params: Tool parameters
-            metadata: Additional metadata
-        """
+        """Log an agent action"""
         content = {
             "tool": tool_name,
             "parameters": params
@@ -85,16 +67,13 @@ class ThinkingLogger:
         except asyncio.QueueFull:
             pass
         
-        print(f"🔧 Action: {tool_name}({json.dumps(params, indent=2)})")
+        if self.ui_callback:
+            self.ui_callback("action", f"{tool_name}({json.dumps(params, indent=None)})")
+        else:
+            print_action(tool_name, json.dumps(params, indent=None))
     
     def log_observation(self, result: Any, metadata: Dict[str, Any] = None) -> None:
-        """
-        Log an observation (result of an action)
-        
-        Args:
-            result: Action result
-            metadata: Additional metadata
-        """
+        """Log an observation"""
         event = self._create_event(EventType.OBSERVATION, result, metadata)
         self.events.append(event)
         try:
@@ -102,22 +81,22 @@ class ThinkingLogger:
         except asyncio.QueueFull:
             pass
         
-        # Print summary of observation
+        # Prepare message
         if isinstance(result, dict) and "success" in result:
-            status = "✓" if result.get("success") else "✗"
+            success = result.get("success", False)
             message = result.get("message", result.get("error", "No message"))
-            print(f"👁️ {status} {message}")
         else:
-            print(f"👁️ Observation: {str(result)[:100]}")
+            message = str(result)[:100]
+            success = True
+            
+        if self.ui_callback:
+            status = "✓" if success else "✗"
+            self.ui_callback("observation", f"{status} {message}")
+        else:
+            print_observation(message, success)
     
     def log_error(self, error_message: str, metadata: Dict[str, Any] = None) -> None:
-        """
-        Log an error
-        
-        Args:
-            error_message: Error message
-            metadata: Additional metadata
-        """
+        """Log an error"""
         event = self._create_event(EventType.ERROR, error_message, metadata)
         self.events.append(event)
         try:
@@ -125,16 +104,13 @@ class ThinkingLogger:
         except asyncio.QueueFull:
             pass
         
-        print(f"❌ Error: {error_message}")
+        if self.ui_callback:
+            self.ui_callback("error", error_message)
+        else:
+            print_error(error_message)
     
     def log_result(self, result: Any, metadata: Dict[str, Any] = None) -> None:
-        """
-        Log final result
-        
-        Args:
-            result: Final result
-            metadata: Additional metadata
-        """
+        """Log final result"""
         event = self._create_event(EventType.RESULT, result, metadata)
         self.events.append(event)
         try:
@@ -142,7 +118,11 @@ class ThinkingLogger:
         except asyncio.QueueFull:
             pass
         
-        print(f"✅ Result: {result}")
+        if self.ui_callback:
+            self.ui_callback("result", str(result))
+        else:
+            from src.utils.ui import console
+            console.print(f"[bold green]✅ Result:[/bold green] {result}")
     
     def get_full_trace(self) -> List[Dict[str, Any]]:
         """
