@@ -166,7 +166,8 @@ async def test_agent(command: str, mode: AgentMode = AgentMode.FAST):
         console.print(f"\n[error]❌ Error during execution: {e}[/error]")
     finally:
         await agent.cleanup()
-        if result and result.get('trace'):
+        # FIX: Check for 'events' attribute, not 'logs'
+        if thinking_logger.events:
             console.print(f"\n[dim]📋 Saved trace to: agent_trace.json[/dim]")
             thinking_logger.save_to_file("agent_trace.json")
 
@@ -211,4 +212,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
