@@ -1,0 +1,12 @@
+[project]
+name = "echo-desktop"
+version = "0.1.0"
+description = "Echo: Your AI-powered voice assistant for Windows desktop automation."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain>=0.3.18",
+    "langchain-google-genai>=2.0.8",
+    "langchain-mcp-adapters>=0.1.0",
+    "python-dotenv>=1.2.1",
+]

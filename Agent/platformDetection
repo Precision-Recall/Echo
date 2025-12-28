@@ -1,0 +1,32 @@
+import platform
+from enum import Enum
+
+class OSPlatform(Enum):
+    WINDOWS = "windows"
+    MACOS = "darwin"
+    LINUX = "linux"
+    UNKNOWN = "unknown"
+
+class PlatformRouter:
+    """Detects platform and loads appropriate MCP server"""    
+    def __init__(self):
+        self.platform = self._detect_platform()
+    
+    def _detect_platform(self) -> OSPlatform:
+        """Detect operating system"""
+        system = platform.system().lower()
+        
+        if system == "windows":
+            return OSPlatform.WINDOWS
+        elif system == "darwin":
+            return OSPlatform.MACOS
+        elif system == "linux":
+            return OSPlatform.LINUX
+        else:
+            return OSPlatform.UNKNOWN
+
+    def get_platform(self) -> OSPlatform:
+        return self.platform
+
+    def get_platform_name(self) -> str:
+        return self.platform.value
