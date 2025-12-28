@@ -5,8 +5,11 @@ description = "Echo: Your AI-powered voice assistant for Windows desktop automat
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "google-genai>=1.56.0",
     "langchain>=0.3.18",
     "langchain-google-genai>=2.0.8",
     "langchain-mcp-adapters>=0.1.0",
+    "pyaudio>=0.2.14",
     "python-dotenv>=1.2.1",
+    "websockets>=15.0.1",
 ]

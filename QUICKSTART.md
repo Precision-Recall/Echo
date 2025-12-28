@@ -36,6 +36,7 @@ uv run python main.py --command "Open Calculator"
 
 ## What the Agent Can Do
 
+- 🎙️ **Real-time Voice Interaction** (New!)
 - ✅ Launch Windows applications (notepad, calc, mspaint, etc.)
 - ✅ Type text in focused windows
 - ✅ Press keyboard shortcuts (ctrl+s, enter, etc.)

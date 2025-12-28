@@ -31,7 +31,7 @@ class ModelConfig:
         configs = {
             AgentMode.FAST: ModelConfig("gemini-2.0-flash-exp"),
             AgentMode.REASONING: ModelConfig("gemini-2.0-pro-exp-02-05"), 
-            AgentMode.VOICE: ModelConfig("gemini-2.0-flash-exp"),
+            AgentMode.VOICE: ModelConfig("gemini-2.5-flash-native-audio-preview-12-2025"),
         }
         return configs.get(mode, configs[AgentMode.FAST])
 
@@ -165,6 +165,23 @@ Be precise with coordinates and wait appropriately between actions."""
                 "trace": self.logger.get_full_trace()
             }
     
+    async def run_voice_session(self):
+        """Run a Gemini Live voice session"""
+        if not self.mcp_client:
+            await self.initialize()
+            
+        from src.agent.live_client import GeminiLiveClient
+        
+        # Use the config model name (defaulting to flash-exp for now)
+        client = GeminiLiveClient(
+            api_key=self.gemini_api_key,
+            model_name=self.config.model_name, 
+            mcp_client=self.mcp_client,
+            logger=self.logger
+        )
+        
+        await client.run()
+
     async def cleanup(self):
         """Clean up resources"""
         if self.mcp_client:
