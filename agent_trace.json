@@ -2,37 +2,37 @@
   {
     "type": "thought",
     "content": "Connecting to Windows-MCP server...",
-    "timestamp": "2025-12-28T14:47:54.906783",
+    "timestamp": "2025-12-28T15:22:53.375979",
     "metadata": {}
   },
   {
     "type": "thought",
     "content": "\u2713 Loaded 11 tools from Windows-MCP",
-    "timestamp": "2025-12-28T14:47:55.260359",
+    "timestamp": "2025-12-28T15:22:53.720071",
     "metadata": {}
   },
   {
     "type": "thought",
     "content": "Available tools: App-Tool, Powershell-Tool, State-Tool, Click-Tool, Type-Tool, Scroll-Tool, Drag-Tool, Move-Tool, Shortcut-Tool, Wait-Tool, Scrape-Tool",
-    "timestamp": "2025-12-28T14:47:55.260359",
+    "timestamp": "2025-12-28T15:22:53.720071",
     "metadata": {}
   },
   {
     "type": "thought",
     "content": "\u2713 Agent initialized successfully",
-    "timestamp": "2025-12-28T14:47:55.708196",
+    "timestamp": "2025-12-28T15:22:54.154353",
     "metadata": {}
   },
   {
     "type": "thought",
     "content": "Task: Open Notepad and write hi this is ai-gen [desktop] and save it as mameworkinguhh.txt and open mail and send this to imvinoth521@gmail.com with subject as desktop automation working!!",
-    "timestamp": "2025-12-28T14:47:55.709204",
+    "timestamp": "2025-12-28T15:22:54.155358",
     "metadata": {}
   },
   {
     "type": "error",
-    "content": "Error executing task: Recursion limit of 25 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
-    "timestamp": "2025-12-28T14:49:48.857323",
+    "content": "Error executing task: Error calling model 'gemini-2.5-flash-native-audio-preview-12-2025' (NOT_FOUND): 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-2.5-flash-native-audio-preview-12-2025 is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}",
+    "timestamp": "2025-12-28T15:22:54.550192",
     "metadata": {}
   }
 ]

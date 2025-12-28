@@ -6,6 +6,8 @@ Simplified implementation using langchain-mcp-adapters
 import os
 from typing import Dict, Any
 from dotenv import load_dotenv
+from enum import Enum
+from dataclasses import dataclass
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -14,7 +16,24 @@ from langchain_core.messages import HumanMessage
 
 from .thinking_logger import ThinkingLogger
 
+class AgentMode(Enum):
+    FAST = "fast"           # Fast execution (Default)
+    REASONING = "reasoning" # Better planning
+    VOICE = "voice"         # Voice preview model (Experimental)
 
+@dataclass
+class ModelConfig:
+    model_name: str
+    temperature: float = 0
+    
+    @staticmethod
+    def get_config(mode: AgentMode) -> 'ModelConfig':
+        configs = {
+            AgentMode.FAST: ModelConfig("gemini-2.0-flash-exp"),
+            AgentMode.REASONING: ModelConfig("gemini-2.0-pro-exp-02-05"), 
+            AgentMode.VOICE: ModelConfig("gemini-2.0-flash-exp"),
+        }
+        return configs.get(mode, configs[AgentMode.FAST])
 
 class DesktopAgent:
     """Desktop automation agent powered by LangChain + Windows-MCP"""
@@ -24,24 +43,25 @@ class DesktopAgent:
         gemini_api_key: str,
         thinking_logger: ThinkingLogger,
         mcp_url: str = "http://localhost:8000/mcp",
-        model_name: str = "gemini-2.5-flash"
+        mode: AgentMode = AgentMode.FAST
     ):
         """
         Initialize agent
         
         Args:
             gemini_api_key: Google Gemini API key
-            thinking_logger: Logger for tracking agent reasoning
-            mcp_url: URL of Windows-MCP server (default: http://localhost:8000/mcp)
-            model_name: Gemini model to use
+            thinking_logger: Logger for thinking trace
+            mcp_url: Windows-MCP server URL
+            mode: Agent execution mode (FAST, REASONING, VOICE)
         """
         self.logger = thinking_logger
         self.gemini_api_key = gemini_api_key
         self.mcp_url = mcp_url
-        self.model_name = model_name
+        self.config = ModelConfig.get_config(mode)
         
         self.mcp_client: MultiServerMCPClient = None
-        self.agent_executor: Runnable = None # Changed type hint from AgentExecutor to Runnable
+        self.agent_executor: Runnable = None
+
         
     async def initialize(self):
         """Initialize MCP client and LangGraph agent"""
@@ -66,10 +86,10 @@ class DesktopAgent:
             
             # Create Gemini LLM via LangChain
             llm = ChatGoogleGenerativeAI(
-                model=self.model_name,
+                model=self.config.model_name,
                 google_api_key=self.gemini_api_key,
-                temperature=0,
-                convert_system_message_to_human=True  # Gemini compatibility
+                temperature=self.config.temperature,
+                convert_system_message_to_human=True  
             )
             
             # Create LangGraph agent with ReAct prompt

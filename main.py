@@ -35,7 +35,9 @@ async def test_agent(command: str):
     
     agent = DesktopAgent(
         gemini_api_key=gemini_api_key,
-        thinking_logger=thinking_logger
+        thinking_logger=thinking_logger,
+        # Default to FAST mode for CLI testing
+        # To use Voice mode later: mode=AgentMode.VOICE
     )
     
     # Initialize agent (connect to MCP, load tools)
