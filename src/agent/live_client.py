@@ -9,7 +9,6 @@ from google.genai.types import (
     LiveConnectConfig,
     PrebuiltVoiceConfig,
     VoiceConfig,
-    VoiceConfig,
     Tool,
     FunctionDeclaration,
     LiveClientToolResponse,
@@ -22,6 +21,8 @@ class GeminiLiveClient:
     """
     Voice client using official google-genai SDK.
     Handles bidirectional audio and tool execution via MCP.
+    
+    Based on working pattern with TUI integration and transcription support.
     """
     
     def __init__(self, api_key: str, model_name: str, mcp_client: Any, logger):
@@ -37,10 +38,24 @@ class GeminiLiveClient:
         # 1. Get MCP Tools and convert to GenAI format
         tools = await self._get_genai_tools()
         
+        # Working config pattern - simple dict
         config = {
             "response_modalities": ["AUDIO"],
             "tools": tools,
-            "system_instruction": "You are Echo, a helpful Windows desktop assistant. Use tools to control the computer.",
+            "system_instruction": (
+                "You are Echo, a helpful Windows desktop assistant.\n\n"
+                "IMPORTANT RULES:\n"
+                "- For greetings, simple questions, or casual conversation: respond directly WITHOUT using tools\n"
+                "- Only use tools when the user explicitly asks you to DO something on their computer\n"
+                "- Examples that DON'T need tools: 'hello', 'how are you', 'what can you do', 'tell me a joke'\n"
+                "- Examples that DO need tools: 'open notepad', 'click the start button', 'type this text'\n"
+                "- Be concise and natural in your responses"
+            ),
+            "speech_config": {
+                "voice_config": {"prebuilt_voice_config": {"voice_name": "Puck"}}
+            },
+            # Enable transcription
+            "output_audio_transcription": {}
         }
         
         self.logger.log_thought(f"🎙️ Connecting to Gemini Live ({self.model_name})...")
@@ -55,10 +70,15 @@ class GeminiLiveClient:
                 async with asyncio.TaskGroup() as tg:
                     tg.create_task(self._send_audio(session))
                     tg.create_task(self._receive_loop(session))
-                    tg.create_task(self._play_audio())
                     
+        except asyncio.CancelledError:
+            self.logger.log_thought("Session cancelled")
         except Exception as e:
             self.logger.log_error(f"Live Session Error: {e}")
+            import traceback
+            self.logger.log_error(traceback.format_exc())
+        finally:
+            self.audio.close()
 
     async def _get_genai_tools(self) -> List[Tool]:
         """Convert MCP tools to Google GenAI Tool objects"""
@@ -69,12 +89,12 @@ class GeminiLiveClient:
             # Handle Schema
             schema = {}
             if hasattr(t, 'args_schema') and t.args_schema:
-                 if hasattr(t.args_schema, 'schema'):
-                     schema = t.args_schema.schema()
-                 elif isinstance(t.args_schema, dict):
-                     schema = t.args_schema
+                if hasattr(t.args_schema, 'schema'):
+                    schema = t.args_schema.schema()
+                elif isinstance(t.args_schema, dict):
+                    schema = t.args_schema
             
-            # Remove title/definitions if present
+            # Remove title/definitions if present (not supported by GenAI)
             if "title" in schema: del schema["title"]
             if "definitions" in schema: del schema["definitions"]
             
@@ -87,49 +107,83 @@ class GeminiLiveClient:
         return [Tool(function_declarations=declarations)]
 
     async def _send_audio(self, session):
-        """Send mic audio to session"""
+        """Send mic audio to session (working pattern)"""
         try:
             async with self.audio as audio:
                 await audio.start_recording()
                 while True:
                     chunk = await audio.get_audio_chunk()
-                    # Send raw PCM, SDK handles wrapping
-                    await session.send(input={"data": chunk, "mime_type": "audio/pcm"}, end_of_turn=False)
+                    # Send raw PCM with end_of_turn=False for continuous streaming
+                    await session.send(
+                        input={"data": chunk, "mime_type": "audio/pcm"},
+                        end_of_turn=False
+                    )
         except asyncio.CancelledError:
-            pass
+            self.logger.log_thought("Audio sending cancelled")
         except Exception as e:
             self.logger.log_error(f"Send Audio Error: {e}")
-            raise e
-
-    async def _play_audio(self):
-        """Play audio from queue"""
-        # AudioManager handles queue internally
-        while True:
-            # We access the queue directly or need an interface
-            # The original AudioManager uses blocking queue for output. 
-            # We need to bridge the session receive loop to AudioManager's play_audio_chunk 
-            await asyncio.sleep(0.1) # Placeholder, actual logic in _receive_loop
+            raise
 
     async def _receive_loop(self, session):
-        """Receive audio and tool calls"""
-        while True:
-            try:
+        """Receive audio, transcriptions, and tool calls"""
+        try:
+            # CRITICAL: while True wrapper for multi-turn conversation!
+            # session.receive() returns an iterator for ONE turn only
+            while True:
                 async for response in session.receive():
-                    # 1. Handle Audio
+                    # 1. Handle server content (audio/text from model)
                     if response.server_content:
-                        model_turn = response.server_content.model_turn
-                        if model_turn:
-                            for part in model_turn.parts:
+                        server_content = response.server_content
+                        
+                        # Handle model turn (audio/text)
+                        if server_content.model_turn:
+                            for part in server_content.model_turn.parts:
+                                # Audio data
                                 if part.inline_data:
-                                    self.audio.play_audio_chunk(part.inline_data.data)
-
-                    # 2. Handle Tool Calls
+                                    audio_data = part.inline_data.data
+                                    # Decode if base64
+                                    if isinstance(audio_data, str):
+                                        audio_data = base64.b64decode(audio_data)
+                                    self.audio.play_audio_chunk(audio_data)
+                                
+                                # Text data (transcription or direct text)
+                                if part.text:
+                                    self.logger.log_result(f"🗣️ {part.text}")
+                        
+                        # Handle output audio transcription
+                        if hasattr(server_content, 'output_transcription') and server_content.output_transcription:
+                            transcript = server_content.output_transcription.text
+                            if transcript:
+                                self.logger.log_result(f"📝 Echo: {transcript}")
+                        
+                        # Handle input audio transcription (what user said)
+                        if hasattr(server_content, 'input_transcription') and server_content.input_transcription:
+                            transcript = server_content.input_transcription.text
+                            if transcript:
+                                self.logger.log_thought(f"🎤 You: {transcript}")
+                        
+                        # Handle turn complete - just log, don't break!
+                        if server_content.turn_complete:
+                            self.logger.log_thought("✅ Turn complete")
+                            # Stop playback after turn completes
+                            await asyncio.sleep(0.3)
+                            self.audio.stop_playback()
+                        
+                        # Handle interruption
+                        if hasattr(server_content, 'interrupted') and server_content.interrupted:
+                            self.logger.log_thought("🛑 Interrupted")
+                            self.audio.stop_playback()
+                    
+                    # 2. Handle tool calls
                     if response.tool_call:
                         await self._handle_tool_call(session, response.tool_call)
                         
-            except Exception as e:
-                self.logger.log_error(f"Receive error: {e}")
-                break
+        except asyncio.CancelledError:
+            self.logger.log_thought("Receive loop cancelled")
+        except Exception as e:
+            self.logger.log_error(f"Receive error: {e}")
+            import traceback
+            self.logger.log_error(traceback.format_exc())
 
     async def _handle_tool_call(self, session, tool_call):
         """Execute tool and send response"""
@@ -143,22 +197,22 @@ class GeminiLiveClient:
             name = fc.name
             args = fc.args
             
-            self.logger.log_thought(f"🔧 Live Tool: {name}")
+            self.logger.log_thought(f"🔧 Tool: {name}")
+            self.logger.log_action(f"Executing {name}", args)
             
             try:
                 if name not in tool_map:
                     raise ValueError(f"Tool {name} not found")
                 
                 # Execute via LangChain Tool
-                # Use ainvoke if available, else invoke
                 tool = tool_map[name]
                 if hasattr(tool, "ainvoke"):
                     result = await tool.ainvoke(args)
                 else:
                     result = await asyncio.to_thread(tool.invoke, args)
                 
-                # Result might be a string or object
                 content = str(result)
+                self.logger.log_observation(f"Result: {content[:200]}...")
                 
                 function_responses.append(FunctionResponse(
                     name=name,
@@ -167,6 +221,7 @@ class GeminiLiveClient:
                 ))
                 
             except Exception as e:
+                self.logger.log_error(f"Tool error: {e}")
                 function_responses.append(FunctionResponse(
                     name=name,
                     id=fc.id,
@@ -176,4 +231,3 @@ class GeminiLiveClient:
         # Send result back
         tool_response = LiveClientToolResponse(function_responses=function_responses)
         await session.send(input=tool_response)
-

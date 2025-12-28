@@ -7,13 +7,15 @@ class AudioManager:
     """
     Manages audio input (microphone) and output (speaker) streams.
     Format: 16kHz, 16-bit PCM, Mono (Gemini standard).
+    
+    Based on working pattern with improved output buffering.
     """
     
     FORMAT = pyaudio.paInt16
     CHANNELS = 1
-    INPUT_RATE = 16000
-    OUTPUT_RATE = 24000
-    CHUNK = 512
+    INPUT_RATE = 16000   # Mic input: 16kHz
+    OUTPUT_RATE = 24000  # Gemini output: 24kHz
+    CHUNK = 512          # Smaller chunk for better responsiveness
     
     def __init__(self):
         self.p = pyaudio.PyAudio()
@@ -31,7 +33,7 @@ class AudioManager:
         self.close()
 
     async def start_recording(self):
-        """Start capturing microphone input"""
+        """Start capturing microphone input using callback (working pattern)"""
         if self._is_recording:
             return
 
@@ -52,6 +54,7 @@ class AudioManager:
             stream_callback=callback
         )
         self.input_stream.start_stream()
+        print(f"✓ Recording started: {self.INPUT_RATE}Hz, chunk={self.CHUNK}")
 
     async def stop_recording(self):
         """Stop capturing microphone input"""
@@ -66,46 +69,75 @@ class AudioManager:
         return await self.input_queue.get()
 
     def start_playback(self):
-        """Start playing audio from the queue"""
+        """Start playing audio using blocking write (official pattern)"""
         if self._is_playing:
             return
             
         self._is_playing = True
         
-        def callback(in_data, frame_count, time_info, status):
-            try:
-                data = self.output_queue.get_nowait()
-                return (data, pyaudio.paContinue)
-            except queue.Empty:
-                return (b'\x00' * frame_count * 2, pyaudio.paContinue)
-
+        # Open output stream without callback (blocking mode)
         self.output_stream = self.p.open(
             format=self.FORMAT,
             channels=self.CHANNELS,
             rate=self.OUTPUT_RATE,
             output=True,
-            stream_callback=callback
         )
-        self.output_stream.start_stream()
+        
+        # Start playback thread
+        self._playback_thread = threading.Thread(target=self._playback_loop, daemon=True)
+        self._playback_thread.start()
+    
+    def _playback_loop(self):
+        """Background thread for blocking audio write (matches official example)"""
+        while self._is_playing and self.output_stream:
+            try:
+                # Block waiting for audio data
+                data = self.output_queue.get(timeout=0.5)
+                if data and self.output_stream:
+                    self.output_stream.write(data)
+            except queue.Empty:
+                continue  # No data, keep waiting
+            except Exception as e:
+                if self._is_playing:
+                    print(f"⚠️ Playback error: {e}")
+                break
 
     def stop_playback(self):
         """Stop audio playback"""
         self._is_playing = False
         if self.output_stream:
-            self.output_stream.stop_stream()
-            self.output_stream.close()
+            try:
+                self.output_stream.stop_stream()
+                self.output_stream.close()
+            except:
+                pass
             self.output_stream = None
+        # Clear queue
+        while not self.output_queue.empty():
+            try:
+                self.output_queue.get_nowait()
+            except:
+                break
 
     def play_audio_chunk(self, data: bytes):
         """Add audio chunk to playback queue"""
+        if not data:
+            return
         if not self._is_playing:
             self.start_playback()
-        self.output_queue.put(data)
+        try:
+            self.output_queue.put_nowait(data)
+        except queue.Full:
+            pass  # Drop if queue full to prevent lag
 
     def close(self):
         """Cleanup resources"""
+        print("🛑 Closing audio manager...")
         self.stop_playback()
-        # stop_recording is async, so we assume caller handles it or we do best effort
         if self.input_stream:
-            self.input_stream.close()
+            try:
+                self.input_stream.close()
+            except:
+                pass
         self.p.terminate()
+        print("✓ Audio manager closed")
