@@ -1,7 +1,6 @@
 import asyncio
 import base64
-import json
-import logging
+from google.genai import types
 from typing import List, Dict, Any, Optional
 
 from google import genai
@@ -55,7 +54,11 @@ class GeminiLiveClient:
                 "voice_config": {"prebuilt_voice_config": {"voice_name": "Puck"}}
             },
             # Enable transcription
-            "output_audio_transcription": {}
+            "output_audio_transcription": {},
+            "enable_affective_dialog": True,
+            "thinking_config": types.ThinkingConfig(
+                thinking_budget=1024,
+            )
         }
         
         self.logger.log_thought(f"🎙️ Connecting to Gemini Live ({self.model_name})...")
