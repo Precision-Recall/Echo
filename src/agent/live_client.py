@@ -1,7 +1,7 @@
 import asyncio
 import base64
 from google.genai import types
-from typing import List, Dict, Any, Optional
+from typing import List, Any
 
 from google import genai
 from google.genai.types import (
@@ -15,7 +15,7 @@ from google.genai.types import (
 )
 
 from src.agent.audio import AudioManager
-
+from Prompts.promptLoader import PromptLoader
 class GeminiLiveClient:
     """
     Voice client using official google-genai SDK.
@@ -30,26 +30,19 @@ class GeminiLiveClient:
         self.mcp_client = mcp_client
         self.logger = logger
         self.audio = AudioManager()
+        self.prompt_loader = PromptLoader("Prompts/prompts") 
         
     async def run(self):
         """Main loop: Connect -> Audio/Tool Loop"""
         
         # 1. Get MCP Tools and convert to GenAI format
         tools = await self._get_genai_tools()
-        
+        system_prompt = self.prompt_loader.load_prompt("echo_voice_tui.txt")
         # Working config pattern - simple dict
         config = {
             "response_modalities": ["AUDIO"],
             "tools": tools,
-            "system_instruction": (
-                "You are Echo, a helpful Windows desktop assistant.\n\n"
-                "IMPORTANT RULES:\n"
-                "- For greetings, simple questions, or casual conversation: respond directly WITHOUT using tools\n"
-                "- Only use tools when the user explicitly asks you to DO something on their computer\n"
-                "- Examples that DON'T need tools: 'hello', 'how are you', 'what can you do', 'tell me a joke'\n"
-                "- Examples that DO need tools: 'open notepad', 'click the start button', 'type this text'\n"
-                "- Be concise and natural in your responses"
-            ),
+            "system_instruction": system_prompt,
             "speech_config": {
                 "voice_config": {"prebuilt_voice_config": {"voice_name": "Puck"}}
             },
