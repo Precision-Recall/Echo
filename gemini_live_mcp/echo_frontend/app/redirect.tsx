@@ -4,23 +4,20 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from './contexts/AuthContext';
 
-export default function HomePage() {
+export default function RedirectPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (!loading) {
       if (user) {
-        // User is authenticated, go to chat
         router.push('/chat');
       } else {
-        // User is not authenticated, go to landing
         router.push('/landing');
       }
     }
   }, [user, loading, router]);
 
-  // Show loading spinner while checking auth
   return (
     <div className="min-h-screen flex items-center justify-center bg-white">
       <div className="text-center">
@@ -30,3 +27,4 @@ export default function HomePage() {
     </div>
   );
 }
+
