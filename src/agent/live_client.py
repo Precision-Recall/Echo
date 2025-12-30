@@ -43,8 +43,10 @@ class GeminiLiveClient:
         
     async def run(self):
         """Main loop: Connect -> Audio/Tool Loop"""
+        print("[DEBUG] GeminiLiveClient.run() started", flush=True)
         
         # 0. Connect to MCP (if not provided)
+        print("[DEBUG] Calling _connect_mcp...", flush=True)
         await self._connect_mcp()
         
         # 1. Get MCP Tools and convert to GenAI format
@@ -67,6 +69,7 @@ class GeminiLiveClient:
         }
         
         self.logger.log_thought(f"🎙️ Connecting to Gemini Live ({self.model_name})...")
+        print(f"[DEBUG] Connecting to Gemini Live API with model {self.model_name}...", flush=True)
         
         try:
             async with self.client.aio.live.connect(
@@ -90,16 +93,30 @@ class GeminiLiveClient:
 
     async def _connect_mcp(self):
         """Connect to MCP server if not already connected"""
+        print(f"[DEBUG] _connect_mcp called. Current mcp_client: {self.mcp_client}", flush=True)
         if self.mcp_client:
             return  # Already have a client
             
         try:
+            print("[DEBUG] Importing MultiServerMCPClient...", flush=True)
             from langchain_mcp_adapters.client import MultiServerMCPClient
             self.logger.log_thought("📡 Connecting to Windows-MCP...")
+            
+            print(f"[DEBUG] Connecting to MCP config: {MCP_CONFIG}", flush=True)
             self.mcp_client = MultiServerMCPClient(MCP_CONFIG)
+            
+            print("[DEBUG] Fetching tools...", flush=True)
             tools = await self.mcp_client.get_tools()
+            
             self.logger.log_thought(f"✅ MCP connected - {len(tools)} tools available")
+            print(f"[DEBUG] MCP Connected. Tools: {len(tools)}", flush=True)
         except Exception as e:
+            print(f"[DEBUG] MCP CONNECTION ERROR: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            self.logger.log_thought(f"⚠️ MCP not available - voice only mode")
+            self.logger.log_error(f"MCP Error: {e}") # Log to UI as well
+            self.mcp_client = None
             self.logger.log_thought(f"⚠️ MCP not available - voice only mode")
             self.mcp_client = None
 
@@ -230,12 +247,19 @@ class GeminiLiveClient:
                 if name not in tool_map:
                     raise ValueError(f"Tool {name} not found")
                 
-                # Execute via LangChain Tool
+                # Execute via LangChain Tool with timeout
                 tool = tool_map[name]
-                if hasattr(tool, "ainvoke"):
-                    result = await tool.ainvoke(args)
-                else:
-                    result = await asyncio.to_thread(tool.invoke, args)
+                try:
+                    if hasattr(tool, "ainvoke"):
+                        result = await asyncio.wait_for(tool.ainvoke(args), timeout=15.0)
+                    else:
+                        result = await asyncio.wait_for(
+                            asyncio.to_thread(tool.invoke, args), 
+                            timeout=15.0
+                        )
+                except asyncio.TimeoutError:
+                    result = f"Tool execution timed out after 15 seconds"
+                    self.logger.log_error(result)
                 
                 content = str(result)
                 self.logger.log_observation(f"Result: {content[:200]}...")
@@ -254,6 +278,9 @@ class GeminiLiveClient:
                     response={"error": str(e)}
                 ))
                 
-        # Send result back
-        tool_response = LiveClientToolResponse(function_responses=function_responses)
-        await session.send(input=tool_response)
+        # Send result back with connection error handling
+        try:
+            tool_response = LiveClientToolResponse(function_responses=function_responses)
+            await session.send(input=tool_response)
+        except Exception as e:
+            self.logger.log_error(f"Failed to send tool response: {e}")
