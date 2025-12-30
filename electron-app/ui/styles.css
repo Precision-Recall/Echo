@@ -105,10 +105,15 @@ body {
 .panel-content {
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 12px;
     scroll-behavior: smooth;
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+    min-height: 0;
+    /* Critical for flex child scrolling */
+    max-height: calc(100vh - 200px);
+    /* Ensure scrollable within viewport */
 }
 
 .panel-content::-webkit-scrollbar {

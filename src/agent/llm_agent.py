@@ -29,7 +29,7 @@ class ModelConfig:
     @staticmethod
     def get_config(mode: AgentMode) -> 'ModelConfig':
         configs = {
-            AgentMode.FAST: ModelConfig("gemini-2.0-flash-exp"),
+            AgentMode.FAST: ModelConfig("gemini-2.0-flash"),
             AgentMode.REASONING: ModelConfig("gemini-2.0-pro-exp-02-05"), 
             AgentMode.VOICE: ModelConfig("gemini-2.5-flash-native-audio-preview-12-2025"),
         }
