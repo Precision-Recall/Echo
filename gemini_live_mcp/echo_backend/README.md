@@ -16,28 +16,56 @@ Frontend (Next.js) ←→ Backend (FastAPI) ←→ Gemini API
 
 - **Real-time Speech-to-Speech**: Continuous bidirectional audio streaming via `/ws/live`
 - **Text Chat with Tool Calling**: Streaming text responses and tool execution via `/ws/chat`
-- **Google Classroom Integration**: Built-in tools to access Google Classroom data
+- **Short-term Memory**: Thread-based conversation memory with automatic trimming and context management
+- **Thinking Model with Chain of Thought**: AI shows step-by-step reasoning process before answers
+- **Google Classroom Integration**: Built-in tools to access and create Google Classroom assignments and coursework
+- **Google Docs Creator**: Generate professionally formatted Google Docs with native styles (headings, bold, italic, lists)
+- **Google Sheets Creator**: Create structured Google Sheets with headers and data
+- **Assignment & Course Creation**: Structured forms for creating classroom content
 - **Native Audio Support**: Uses Gemini 2.5 Flash Native Audio for voice
 - **Dual Modes**: Separate voice and chat modes with independent connections
-- **CORS Enabled**: Configured for localhost:3000 frontend
+- **Flexible CORS**: Environment-configurable for any frontend domain
+- **Robust WebSocket Handling**: Proper exception handling and graceful disconnection management
+- **Concurrent WebSocket Support**: Both endpoints can run simultaneously without interference
+- **User-Friendly Error Messages**: Converts technical errors into concise, actionable messages for end users
+- **Memory Management API**: REST endpoints for clearing and inspecting conversation memory
+- **Firebase Token Storage**: Secure per-user OAuth token management in Firestore
 
 ## Setup
 
 ### 1. Install Dependencies
 
+All dependencies are pinned to specific versions for security and reproducibility:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure API Key
+**Security Note**: All dependencies use exact version pinning (`==`) to prevent supply-chain attacks and ensure consistent behavior across environments.
 
-Create a `.env` file:
+### 2. Configure Environment
+
+Copy the example environment file:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set your API key:
 
 ```bash
 GEMINI_API_KEY=your_gemini_api_key_here
+ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 ```
 
 Get your API key from: https://aistudio.google.com/apikey
+
+**Available Environment Variables:**
+- `GEMINI_API_KEY` (required): Your Gemini API key
+- `ALLOWED_ORIGINS` (optional): Comma-separated CORS origins
+- `GOOGLE_CLIENT_ID` (optional): For Google Classroom OAuth
+- `GOOGLE_CLIENT_SECRET` (optional): For Google Classroom OAuth
+- `CLASSROOM_DATA_DIR` (optional): Directory containing tokens.json
 
 ### 3. Run the Server
 
@@ -124,15 +152,142 @@ Text chat mode endpoint with streaming responses and tool calling.
 
 ### HTTP: `/`
 
-Health check endpoint.
+Health check endpoint with configuration status.
 
 **Response:**
 ```json
 {
   "status": "running",
-  "service": "Echo Backend - Gemini Live API Relay"
+  "service": "Echo Backend - Gemini Live API Relay",
+  "api_key_configured": true,
+  "allowed_origins": ["http://localhost:3000"]
 }
 ```
+
+## Short-term Memory System
+
+The backend implements thread-based conversation memory that automatically manages context across messages.
+
+### Memory Management
+
+**Features:**
+- Thread-based storage: Each conversation has a unique `thread_id`
+- Automatic trimming: Keeps memory within token limits (max 4000 tokens estimated)
+- Message retention: Stores up to 20 messages per thread
+- First message preservation: Always keeps the first message for context
+- Automatic cleanup: Old messages removed when limits exceeded
+
+**Memory Manager:**
+```python
+from memory_manager import memory_manager
+
+# Add a message
+memory_manager.add_message(thread_id, role="user", content="Hello")
+
+# Get conversation history
+history = memory_manager.get_history(thread_id)
+
+# Get context string for AI
+context = memory_manager.get_context_string(thread_id)
+
+# Clear thread memory
+memory_manager.clear_thread(thread_id)
+```
+
+### REST API Endpoints
+
+#### `POST /api/memory/clear/{thread_id}`
+Clear all conversation memory for a specific thread.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "thread_id": "thread_123",
+  "message": "Memory cleared"
+}
+```
+
+#### `GET /api/memory/stats/{thread_id}`
+Get memory statistics for a thread.
+
+**Response:**
+```json
+{
+  "thread_id": "thread_123",
+  "message_count": 12,
+  "estimated_tokens": 2847,
+  "total_characters": 11388
+}
+```
+
+#### `GET /api/memory/history/{thread_id}?last_n=5`
+Get conversation history for a thread.
+
+**Parameters:**
+- `last_n` (optional): Return only the last N messages
+
+**Response:**
+```json
+{
+  "thread_id": "thread_123",
+  "messages": [
+    {
+      "role": "user",
+      "content": "List my courses",
+      "timestamp": 1703001234.567
+    },
+    {
+      "role": "model",
+      "content": "Here are your courses...",
+      "timestamp": 1703001235.123
+    }
+  ]
+}
+```
+
+### Integration
+
+The memory system is automatically integrated into the `/ws/chat` endpoint:
+
+1. Each message includes a `thread_id` (default: "default")
+2. User messages are stored in memory before processing
+3. Conversation context is added to AI prompts
+4. AI responses are stored in memory after completion
+5. Memory is automatically trimmed when limits are reached
+
+**Example WebSocket Message with Thread ID:**
+```json
+{
+  "type": "text",
+  "text": "What courses do I have?",
+  "thread_id": "thread_user123_session456"
+}
+```
+
+## Code Quality & Security
+
+This backend implements several best practices:
+
+**Error Handling:**
+- All tool functions return consistent data structures
+- Success responses wrapped in descriptive keys (e.g., `{"course": ...}`)
+- Errors always use `{"error": "message"}` format
+- Uniform error handling across all Google Classroom tools
+
+**Dependency Management:**
+- All dependencies pinned to exact versions (`==`)
+- Prevents supply-chain attacks from malicious package updates
+- Ensures reproducible builds across all environments
+- Explicit, reviewable upgrades instead of automatic
+
+**Code Quality:**
+- No unused imports or dead code
+- Proper type hints where applicable
+- Comprehensive error logging with tracebacks
+- Follows FastAPI and asyncio best practices
+
+See [CODE_QUALITY_IMPROVEMENTS.md](./CODE_QUALITY_IMPROVEMENTS.md) for detailed information.
 
 ## Configuration
 
@@ -147,14 +302,131 @@ Health check endpoint.
 - **Tools**: Google Classroom integration (list courses, assignments, students, etc.)
 
 ### Server
-- **Port**: 8000
-- **CORS**: localhost:3000
+- **Port**: 8000 (default)
+- **CORS**: Configurable via `ALLOWED_ORIGINS` environment variable
 
-## Google Classroom Setup
+## AI-Powered Tools
 
-To use Google Classroom tools, place `tokens.json` and optionally `credentials.json` in the parent directory `../../classroom_mcp-main/`.
+Echo includes several intelligent tools that the AI can use to help users:
 
-The `tokens.json` file should contain OAuth2 credentials from the Google Classroom API.
+### 📚 Google Classroom Tools
+- `list_courses` - View all classroom courses
+- `get_course` - Get details of a specific course
+- `list_coursework` - View assignments in a course
+- `get_coursework` - Get assignment details
+- `list_announcements` - View course announcements
+- `list_students` - View enrolled students
+- `list_submissions` - View student submissions
+- `create_coursework` - Create new assignments
+- `create_course` - Create new courses
+- `show_assignment_form` / `show_course_form` - Display creation forms in UI
+
+### 📄 Google Docs Creator
+**Tool**: `create_google_doc(title, content)`
+
+Creates professionally formatted Google Docs with native formatting:
+- **TITLE style** - Document title at top
+- **HEADING_1/2/3** - Proper heading hierarchy with appropriate font sizes
+- **Bold/Italic** - Inline text emphasis
+- **Bulleted Lists** - Native bullet formatting
+- **Numbered Lists** - Automatic numbering
+- **Paragraph Spacing** - Proper spacing between sections
+
+**Example Usage:**
+```
+User: "Create a 1-page document about Machine Learning"
+AI: Generates comprehensive content with headings, lists, and formatting
+Tool: Creates Google Doc with native styles
+Result: Returns shareable Google Docs link
+```
+
+**Formatting Syntax:**
+The AI uses these markers (parsed into native Google Docs formatting):
+- `# Heading 1` → HEADING_1 style (20pt, bold)
+- `## Heading 2` → HEADING_2 style (16pt, bold)
+- `### Heading 3` → HEADING_3 style (14pt, bold)
+- `**bold text**` → Bold formatting
+- `*italic text*` → Italic formatting
+- `- bullet` → Bulleted list
+- `1. item` → Numbered list
+
+### 📊 Google Sheets Creator
+**Tool**: `create_google_sheet(title, headers, data)`
+
+Creates Google Spreadsheets with structured data:
+- Optional column headers
+- Optional data rows
+- Professional formatting
+- Ready to edit and share
+
+**Example Usage:**
+```
+User: "Create a spreadsheet to track student grades"
+AI: Determines appropriate structure (Name, Email, Assignment 1, Assignment 2, Final)
+Tool: Creates Google Sheet with headers and optional sample data
+Result: Returns shareable Google Sheets link
+```
+
+### 🔐 Authentication
+All tools use OAuth tokens stored in Firebase Firestore:
+- Per-user authentication
+- Secure token storage
+- Automatic token refresh
+- No credentials exposed to frontend
+
+### 📚 Documentation
+For detailed information about the Docs/Sheets creator tools, see [GOOGLE_DOCS_SHEETS_TOOLS.md](./GOOGLE_DOCS_SHEETS_TOOLS.md)
+
+## Google Classroom Setup (Optional)
+
+The Google Classroom tools are optional and only required if you want to access Classroom data.
+
+### Option 1: Quick Setup (Same Directory)
+Place `tokens.json` and `credentials.json` in the `echo_backend/` directory.
+
+### Option 2: Custom Directory
+Set the environment variable:
+```bash
+CLASSROOM_DATA_DIR=/path/to/your/oauth/files
+```
+
+### Getting OAuth Credentials
+1. Create a Google Cloud project at https://console.cloud.google.com
+2. Enable the Google Classroom API
+3. Create OAuth 2.0 credentials (Desktop app)
+4. Download as `credentials.json`
+5. Run OAuth flow to generate `tokens.json`
+
+**⚠️ Security Warning**: Never commit `tokens.json` or `credentials.json` to version control!
+
+For detailed setup instructions, see [SETUP.md](./SETUP.md).
+
+## WebSocket Implementation
+
+### Connection Management
+
+The server implements robust WebSocket handling following FastAPI best practices:
+
+**Exception Handling:**
+- All WebSocket connections properly catch `WebSocketDisconnect` exceptions
+- Background tasks handle cancellation gracefully with `asyncio.CancelledError`
+- Task exceptions are properly retrieved and logged to prevent "Task exception was never retrieved" errors
+
+**Live Audio Endpoint (`/ws/live`):**
+- Uses two concurrent background tasks: `relay_frontend_to_live` and `relay_live_to_frontend`
+- Tasks are properly cancelled when one completes or an error occurs
+- Completed tasks are checked for exceptions to ensure proper error reporting
+
+**Chat Text Endpoint (`/ws/chat`):**
+- Single-threaded message processing for turn-based chat
+- Proper error handling during streaming responses
+- JSON validation with graceful error messages
+
+**Concurrent WebSocket Support:**
+Both `/ws/live` and `/ws/chat` can be used simultaneously by different clients without interference. Each connection maintains its own:
+- Gemini API session
+- Message queue
+- Error handling context
 
 ## Development
 
@@ -186,17 +458,51 @@ wscat -c ws://localhost:8000/ws
 
 ## Troubleshooting
 
-**Connection refused:**
-- Ensure the server is running on port 8000
-- Check firewall settings
+**Server won't start / "API Key missing" error:**
+- Create `.env` file from `.env.example`
+- Set `GEMINI_API_KEY` in `.env`
+- Verify the key is valid at https://aistudio.google.com/apikey
 
-**GEMINI_API_KEY not configured:**
-- Create `.env` file with your API key
-- Verify the key is valid
+**CORS errors in browser:**
+- Add your frontend URL to `ALLOWED_ORIGINS` in `.env`
+- Example: `ALLOWED_ORIGINS=http://localhost:3000,https://yourdomain.com`
+- Restart the server after changing `.env`
 
-**Audio not working:**
-- Ensure you're using the correct model: `gemini-2.5-flash-native-audio-preview`
-- Check audio format: PCM 16kHz mono
+**Chat endpoint disconnects immediately:**
+- Check server logs for initialization errors
+- Verify Gemini API key is valid
+- Ensure all dependencies are installed: `pip install -r requirements.txt`
+
+**WebSocket disconnection errors or "Task exception was never retrieved":**
+- This has been fixed with proper exception handling in background tasks
+- Ensure you're running the latest version of the code
+- If issues persist, restart the server and check for Python version compatibility (Python 3.9+ required)
+
+**"async_generator can't be used in 'await' expression" error:**
+- ✅ **Fixed** - This was caused by incorrectly awaiting an async generator in chat client
+- The `send_message_stream()` method returns an async generator, not a coroutine
+- Fixed by removing the `await` keyword (line 33 in `gemini_chat_client.py`)
+- If you see this error, ensure you're using the latest code
+
+**"GenerateContentResponse.text only supports text parts" error:**
+- ✅ **Fixed** - This occurred when trying to access `chunk.text` on chunks with function calls
+- The fix: Check individual `part.text` instead of `chunk.text`
+- Now properly handles chunks containing both text and function_call parts
+- Tool calling and text streaming now work together correctly
+
+**"tokens.json not found" error:**
+- This only affects Google Classroom features
+- Either set up OAuth credentials (see SETUP.md) or ignore if not using Classroom tools
+- The error won't prevent the server from running
+
+**Live audio endpoint works but chat doesn't:**
+- Check that `google-genai` package is version 0.3.0+
+- Try reinstalling: `pip install --upgrade google-genai`
+
+**Both endpoints fail in production:**
+- Check environment variables are set correctly
+- Verify CORS origins match your frontend domain
+- Check server logs: `journalctl -u echo-backend -f`
 
 ## License
 

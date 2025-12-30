@@ -47,11 +47,25 @@ copy .env.example .env
    uv run python main.py --command "Open Notepad and type Hello World"
    ```
 
-**Server Mode** (for Electron UI - coming soon):
+**Electron App Mode** (Desktop UI):
 ```bash
-# Start the API server
-uv run python main.py server
+# 1. Start Windows-MCP server (required)
+uvx windows-mcp --transport streamable-http --port 8000
+
+# 2. In a new terminal, navigate to electron-app
+cd electron-app
+
+# 3. Install dependencies (first time only)
+npm install
+
+# 4. Start the Electron app
+npm start
 ```
+
+The Electron app provides:
+- Push-to-talk voice control (Alt+Space)
+- Real-time thinking visualization
+- Session management UI
 
 The agent will:
 1. 💭 Think about the task
@@ -88,7 +102,19 @@ The long‑term goal is a **cross‑platform automation framework** with pluggab
 
 ### Components Overview
 
-At a high level, VoiceFlow Desktop consists of:
+Echo consists of:
+
+**Core Components:**
+- **Gemini Live Client** (`src/agent/live_client.py`) - Handles bidirectional audio streaming and tool execution
+- **Audio Manager** (`src/agent/audio.py`) - Manages microphone input and speaker output
+- **MCP Integration** - Connects to Windows-MCP for desktop automation tools
+- **Thinking Logger** (`src/agent/thinking_logger.py`) - Captures and streams agent reasoning
+
+**Interfaces:**
+- **CLI Mode** (`main.py`) - Direct command execution for testing
+- **Electron App** (`electron-app/`) - Desktop UI with voice control
+
+At a high level, Echo consists of:
 
 1. **Voice & LLM Layer**
    - Capture user speech (or text).
@@ -113,38 +139,65 @@ At a high level, VoiceFlow Desktop consists of:
      - Executing shell commands.
    - On Windows, these are implemented by integrating with an existing MCP server for desktop use.[1]
 
-5. **Desktop UI (Electron / Web)**
-   - Voice controls (mic, push‑to‑talk).
-   - Live **Thinking Panel** (AI reasoning stream).
-   - Execution mode switch: **Fast** (direct) vs **Safe** (sandbox).
-   - Status indicators and result view.
+5. **Desktop UI (Electron App)**
+   - Voice controls (push-to-talk with Alt+Space)
+   - Live **Thinking Panel** (AI reasoning stream)
+   - Real-time transcription display
+   - Session management (start/stop)
+   - Status indicators and result view
+   
+   **Architecture:** The Electron app connects to the Python backend via stdin/stdout:
+   - `electron-app/backend/electron_bridge.py` - Python bridge process
+   - Receives commands: START, STOP, QUIT
+   - Streams logs to Electron via stdout prefixes: `[THOUGHT]`, `[ACTION]`, `[RESULT]`
+   
+   See `electron-app/ARCHITECTURE.md` for detailed integration documentation.
 
-### 2.2 Architecture Diagram (Conceptual)
+### Architecture Diagram
 
 ```text
-User (Voice/Text)
-        │
-        ▼
-Voice & LLM Layer
-(LLM + speech in/out)
-        │
-        ▼
-Agent + Thinking Logger
-(plan → act → observe loop)
-        │
-        ├── Thinking Stream (for UI)
-        ▼
-Execution Backend
- ├─ Fast Mode: Host Execution
- └─ Safe Mode: Sandbox Execution
-        │
-        ▼
-Desktop Automation Tools
-(MCP‑style tools, Windows automation)
-        │
-        ▼
-Windows OS / Sandbox OS
+┌─────────────────────────────────────────────────────────────┐
+│ Electron App (JavaScript)                                   │
+│  - UI Controls (Alt+Space to toggle)                        │
+│  - Thinking Panel (live reasoning)                          │
+│  - Transcription Display                                    │
+└───────────────────┬─────────────────────────────────────────┘
+                    │ stdin/stdout
+┌───────────────────▼─────────────────────────────────────────┐
+│ electron_bridge.py (Session Manager)                        │
+│  - ElectronLogger: Format logs for UI                       │
+│  - Initialize MCP connection                                │
+│  - Create GeminiLiveClient on START                         │
+└───────────────────┬─────────────────────────────────────────┘
+                    │ creates
+┌───────────────────▼─────────────────────────────────────────┐
+│ GeminiLiveClient (live_client.py)                           │
+│  - Connect to Gemini Live API                               │
+│  - Load tools from MCP                                      │
+│  - Bidirectional audio streaming                            │
+│  - Execute tool calls                                       │
+└─────┬───────────────────────────────┬───────────────────────┘
+      │                               │
+┌─────▼──────┐                  ┌─────▼──────────┐
+│ MCP Client │                  │ AudioManager   │
+│ (Tools)    │                  │ (I/O)          │
+└─────┬──────┘                  └─────┬──────────┘
+      │                               │
+┌─────▼──────────┐            ┌───────▼────────────┐
+│ Windows-MCP    │            │ Microphone/Speaker │
+│ Server         │            │ (Hardware)         │
+│ (Port 8000)    │            │ 16kHz/24kHz PCM    │
+└────────────────┘            └────────────────────┘
 ```
+
+**Voice Interaction Flow:**
+1. User speaks → Microphone → AudioManager
+2. AudioManager → GeminiLiveClient → Gemini Live API
+3. Gemini processes speech + decides actions
+4. Tool calls → MCP Client → Windows-MCP → Execute
+5. Results → Gemini → Generate voice response
+6. Audio response → AudioManager → Speaker
+7. All steps logged → ElectronLogger → Electron UI
 
 In **Fast Mode**, the backend calls the MCP tools directly on the host OS.[1]
 

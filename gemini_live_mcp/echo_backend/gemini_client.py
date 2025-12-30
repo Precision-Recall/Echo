@@ -6,7 +6,7 @@ Handles real-time speech-to-speech communication
 import asyncio
 import json
 import logging
-from typing import Optional, Callable, Any, AsyncGenerator
+from typing import Callable, Any
 
 from google import genai
 from google.genai import types
@@ -68,8 +68,14 @@ class GeminiLiveClient:
                 # This forces the model to process the accumulated audio context
                 await self.session.send(input=".", end_of_turn=True)
                 
+        except asyncio.CancelledError:
+            print("Send audio cancelled")
+            raise
         except Exception as e:
             print(f"Error sending audio: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     async def receive_loop(self, callback: Callable[[dict], Any]):
         """Listen for responses from Gemini"""
@@ -77,9 +83,9 @@ class GeminiLiveClient:
             raise RuntimeError("Session not started")
             
         print("🎧 Starting receive loop...")
-        while True:
-            try:
-                async for response in self.session.receive():
+        try:
+            async for response in self.session.receive():
+                try:
                     server_content = response.server_content
                     if server_content is None:
                         # Check for tool call on response object (fallback)
@@ -120,8 +126,23 @@ class GeminiLiveClient:
                         print("🏁 Turn complete received")
                         await callback({"type": "turn_complete"})
                         
-            except Exception as e:
-                print(f"Error in receive loop: {e}")
+                except asyncio.CancelledError:
+                    print("Receive loop cancelled")
+                    raise
+                except Exception as e:
+                    print(f"Error processing response in receive loop: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Continue processing other messages
+                    
+        except asyncio.CancelledError:
+            print("Receive loop cancelled")
+            raise
+        except Exception as e:
+            print(f"Fatal error in receive loop: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     async def _handle_function_call(self, fc):
         """Execute a function call and send the response"""
@@ -185,6 +206,11 @@ class GeminiLiveClient:
     async def close(self):
         """Close the session"""
         if self._ctx:
-            await self._ctx.__aexit__(None, None, None)
-            self._ctx = None
-            self.session = None
+            try:
+                await self._ctx.__aexit__(None, None, None)
+            except Exception as e:
+                print(f"Error closing Gemini Live session: {e}")
+            finally:
+                self._ctx = None
+                self.session = None
+                print("✅ Gemini Live session closed")

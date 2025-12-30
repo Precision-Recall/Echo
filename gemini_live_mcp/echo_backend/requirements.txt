@@ -1,9 +1,13 @@
+# Web Framework and Server
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 websockets==14.1
 python-dotenv==1.0.1
+httpx==0.27.0
+
+# Google AI and APIs
 google-genai==0.3.0
-google-api-python-client
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
+google-api-python-client==2.156.0
+google-auth==2.37.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
