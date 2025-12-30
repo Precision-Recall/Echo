@@ -16,24 +16,36 @@ from google.genai.types import (
 
 from src.agent.audio import AudioManager
 from Prompts.promptLoader import PromptLoader
+
+# Default MCP configuration
+MCP_CONFIG = {
+    "windows-mcp": {
+        "transport": "http",
+        "url": "http://127.0.0.1:8000/mcp",
+    }
+}
+
 class GeminiLiveClient:
     """
     Voice client using official google-genai SDK.
     Handles bidirectional audio and tool execution via MCP.
     
-    Based on working pattern with TUI integration and transcription support.
+    MCP connection is handled internally - caller just provides API key.
     """
     
-    def __init__(self, api_key: str, model_name: str, mcp_client: Any, logger):
+    def __init__(self, api_key: str, model_name: str, logger, mcp_client: Any = None):
         self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
         self.model_name = model_name
-        self.mcp_client = mcp_client
+        self.mcp_client = mcp_client  # Will be initialized in run() if None
         self.logger = logger
         self.audio = AudioManager()
         self.prompt_loader = PromptLoader("Prompts/prompts") 
         
     async def run(self):
         """Main loop: Connect -> Audio/Tool Loop"""
+        
+        # 0. Connect to MCP (if not provided)
+        await self._connect_mcp()
         
         # 1. Get MCP Tools and convert to GenAI format
         tools = await self._get_genai_tools()
@@ -76,8 +88,26 @@ class GeminiLiveClient:
         finally:
             self.audio.close()
 
+    async def _connect_mcp(self):
+        """Connect to MCP server if not already connected"""
+        if self.mcp_client:
+            return  # Already have a client
+            
+        try:
+            from langchain_mcp_adapters.client import MultiServerMCPClient
+            self.logger.log_thought("📡 Connecting to Windows-MCP...")
+            self.mcp_client = MultiServerMCPClient(MCP_CONFIG)
+            tools = await self.mcp_client.get_tools()
+            self.logger.log_thought(f"✅ MCP connected - {len(tools)} tools available")
+        except Exception as e:
+            self.logger.log_thought(f"⚠️ MCP not available - voice only mode")
+            self.mcp_client = None
+
     async def _get_genai_tools(self) -> List[Tool]:
         """Convert MCP tools to Google GenAI Tool objects"""
+        # Handle case where MCP client is not available
+        if not self.mcp_client:
+            return []
         langchain_tools = await self.mcp_client.get_tools()
         declarations = []
         

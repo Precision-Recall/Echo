@@ -9,3 +9,5 @@ wheels/
 # Virtual environments
 .env
 agent_trace.json
+node_modules
+*.log

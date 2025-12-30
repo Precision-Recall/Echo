@@ -1,0 +1,337 @@
+/* ECHO Voice Assistant - Static UI Styles */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: transparent;
+    color: white;
+    overflow: hidden;
+    -webkit-app-region: drag;
+}
+
+.app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background: transparent;
+}
+
+/* Expanded state */
+.app[data-expanded="true"] {
+    background: rgba(15, 15, 20, 0.95);
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ===== Split Container ===== */
+.split-container {
+    display: none;
+    flex: 1;
+    flex-direction: row;
+    gap: 12px;
+    padding: 16px;
+    overflow: hidden;
+    min-height: 0;
+    /* Important for flex child scrolling */
+}
+
+.app[data-expanded="true"] .split-container {
+    display: flex;
+}
+
+/* ===== Panels ===== */
+.panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+    min-width: 0;
+    /* Prevent flex blowout */
+}
+
+.panel.left-panel {
+    flex: 1.2;
+    /* Slightly wider for conversation */
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.panel-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.7);
+    letter-spacing: 0.5px;
+}
+
+.cot-status {
+    font-size: 11px;
+    padding: 2px 8px;
+    background: rgba(124, 58, 237, 0.3);
+    border-radius: 10px;
+    color: #A78BFA;
+    font-weight: 500;
+}
+
+.cot-status.listening {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34D399;
+}
+
+.cot-status.speaking {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60A5FA;
+}
+
+.cot-status.error {
+    background: rgba(239, 68, 68, 0.2);
+    color: #F87171;
+}
+
+.panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.panel-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.panel-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.panel-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+}
+
+.panel-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+/* Log Entries */
+.log-entry {
+    padding: 10px;
+    margin-bottom: 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    border-left: 3px solid transparent;
+    word-wrap: break-word;
+    /* Ensure long text wraps */
+}
+
+/* Type-specific styling */
+.log-entry.user {
+    background: rgba(16, 185, 129, 0.1);
+    border-left-color: #10B981;
+    color: #E0E7FF;
+}
+
+.log-entry.assistant {
+    background: rgba(59, 130, 246, 0.1);
+    border-left-color: #3B82F6;
+    color: #E0E7FF;
+}
+
+.log-entry.thought {
+    border-left-color: #8B5CF6;
+    color: rgba(255, 255, 255, 0.6);
+    font-style: italic;
+    font-size: 12px;
+}
+
+/* Right panel logs */
+.right-panel .log-entry {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 12px;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+}
+
+.log-entry.tool {
+    border-left-color: #F59E0B;
+    color: #FBBF24;
+    background: rgba(245, 158, 11, 0.05);
+}
+
+.log-entry.result {
+    color: rgba(255, 255, 255, 0.7);
+    border-left-color: #6B7280;
+}
+
+.log-entry.error {
+    border-left-color: #EF4444;
+    color: #F87171;
+    background: rgba(239, 68, 68, 0.1);
+}
+
+/* ===== Bottom Bar ===== */
+.bottom-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 20px;
+    background: rgba(20, 20, 28, 0.95);
+    border-radius: 40px;
+    margin: 10px;
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    -webkit-app-region: no-drag;
+}
+
+.app[data-expanded="true"] .bottom-bar {
+    margin: 0 10px 10px 10px;
+    border-radius: 12px;
+}
+
+/* ===== Status Orb ===== */
+.orb {
+    position: relative;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #7C3AED;
+    box-shadow: 0 0 16px rgba(124, 58, 237, 0.5), 0 0 32px rgba(124, 58, 237, 0.3);
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.orb-inner {
+    position: absolute;
+    inset: 4px;
+    border-radius: 50%;
+    background: inherit;
+    opacity: 0.7;
+}
+
+.orb.listening {
+    background: #10B981;
+    box-shadow: 0 0 16px rgba(16, 185, 129, 0.6), 0 0 32px rgba(16, 185, 129, 0.4);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.orb.processing {
+    background: #F59E0B;
+    box-shadow: 0 0 16px rgba(245, 158, 11, 0.5), 0 0 32px rgba(245, 158, 11, 0.3);
+}
+
+.orb.speaking {
+    background: #3B82F6;
+    box-shadow: 0 0 16px rgba(59, 130, 246, 0.5), 0 0 32px rgba(59, 130, 246, 0.3);
+}
+
+.orb.error {
+    background: #EF4444;
+    box-shadow: 0 0 16px rgba(239, 68, 68, 0.6), 0 0 32px rgba(239, 68, 68, 0.4);
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+
+    50% {
+        transform: scale(1.1);
+        opacity: 0.8;
+    }
+}
+
+/* Spinner for processing state */
+.spinner {
+    display: none;
+    position: absolute;
+    inset: -4px;
+    border: 2px solid transparent;
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+.orb.processing .spinner {
+    display: block;
+    color: #F59E0B;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ===== Waveform ===== */
+.waveform {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 32px;
+    flex: 1;
+    padding: 0 8px;
+}
+
+.wave-bar {
+    width: 4px;
+    background: #7C3AED;
+    border-radius: 2px;
+    transition: height 0.05s ease, background 0.3s ease;
+    min-height: 4px;
+}
+
+/* ===== Hotkey Badge ===== */
+.hotkey {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 12px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.6);
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+/* ===== Expand Button ===== */
+.expand-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.expand-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+}
+
+.expand-btn.expanded svg {
+    transform: rotate(180deg);
+}
