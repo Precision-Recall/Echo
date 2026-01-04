@@ -4,6 +4,7 @@ Simplified implementation using langchain-mcp-adapters
 """
 
 import os
+import asyncio
 from typing import Dict, Any
 from dotenv import load_dotenv
 from enum import Enum
@@ -18,8 +19,7 @@ from .thinking_logger import ThinkingLogger
 
 class AgentMode(Enum):
     FAST = "fast"           # Fast execution (Default)
-    REASONING = "reasoning" # Better planning
-    VOICE = "voice"         # Voice preview model (Experimental)
+    REASONING = "reasoning" # Multi-agent planning
 
 @dataclass
 class ModelConfig:
@@ -28,12 +28,9 @@ class ModelConfig:
     
     @staticmethod
     def get_config(mode: AgentMode) -> 'ModelConfig':
-        configs = {
-            AgentMode.FAST: ModelConfig("gemini-2.0-flash"),
-            AgentMode.REASONING: ModelConfig("gemini-2.0-pro-exp-02-05"), 
-            AgentMode.VOICE: ModelConfig("gemini-2.5-flash-native-audio-preview-12-2025"),
-        }
-        return configs.get(mode, configs[AgentMode.FAST])
+        # Unified config for Sub-Agents (FAST)
+        # We use Flash 2.0 for both Fast and Reasoning execution layers
+        return ModelConfig("gemini-2.5-flash")
 
 class DesktopAgent:
     """Desktop automation agent powered by LangChain + Windows-MCP"""
@@ -57,7 +54,9 @@ class DesktopAgent:
         self.logger = thinking_logger
         self.gemini_api_key = gemini_api_key
         self.mcp_url = mcp_url
+        self.mcp_url = mcp_url
         self.config = ModelConfig.get_config(mode)
+        self.current_mode = mode
         
         self.mcp_client: MultiServerMCPClient = None
         self.agent_executor: Runnable = None
@@ -103,7 +102,6 @@ Available tools allow you to:
 - Click at coordinates (Click-Tool)
 - Press keyboard shortcuts (Shortcut-Tool)
 - Execute PowerShell commands (Powershell-Tool)
-- And more...
 
 Always think step-by-step:
 1. Check desktop state first if needed
@@ -165,19 +163,53 @@ Be precise with coordinates and wait appropriately between actions."""
                 "trace": self.logger.get_full_trace()
             }
     
+    def set_mode(self, mode_str: str):
+        """Set agent execution mode"""
+        try:
+            # Handle 'fast' and 'reasoning' strings
+            new_mode = AgentMode(mode_str.lower())
+            self.current_mode = new_mode
+            self.logger.log_thought(f"🔄 Mode switched to: {new_mode.value.upper()}")
+        except ValueError:
+            self.logger.log_error(f"❌ Invalid mode: {mode_str}")
+
     async def run_voice_session(self):
         """Run a Gemini Live voice session"""
         if not self.mcp_client:
             await self.initialize()
             
         from src.agent.live_client import GeminiLiveClient
+        from src.agent.state_graph import MultiAgentGraph
         
-        # Use the config model name (defaulting to flash-exp for now)
-        client = GeminiLiveClient(
+        # Initialize Reasoning Agent Graph
+        multi_agent_graph = MultiAgentGraph(
             api_key=self.gemini_api_key,
-            model_name=self.config.model_name, 
             mcp_client=self.mcp_client,
             logger=self.logger
+        )
+        
+        # Determine configuration based on mode
+        # Use Native Audio model for Voice Client
+        voice_model = "gemini-2.5-flash-native-audio-preview-12-2025" 
+        
+        # LOGIC:
+        # FAST Mode -> LiveClient has MCP tools, executes directly.
+        # REASONING Mode -> LiveClient has NO tools. Routes to SubAgent (MultiAgentGraph).
+        
+        # Brief yield to allow any pending mode IPC commands to be processed
+        await asyncio.sleep(0.1)
+        
+        mode_str = self.current_mode.value  # "fast" or "reasoning"
+        self.logger.log_thought(f"📍 Session Mode: {mode_str.upper()}")
+        
+        # Create Voice Client with explicit mode
+        client = GeminiLiveClient(
+            api_key=self.gemini_api_key,
+            model_name=voice_model,
+            logger=self.logger,
+            mode=mode_str,  # Pass mode explicitly
+            mcp_client=self.mcp_client if mode_str == "fast" else None,
+            multi_agent_graph=multi_agent_graph
         )
         
         await client.run()

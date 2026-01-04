@@ -1,8 +1,9 @@
 // ECHO Voice Assistant - Renderer Script
 
 // State
-let state = 'idle'; // idle, listening, processing, speaking, error
+let state = 'idle'; // idle, connecting, listening, processing, speaking, error
 let expanded = false;
+let mode = 'fast';
 let waveformBars = [];
 
 // DOM Elements
@@ -11,6 +12,7 @@ const statusOrb = document.getElementById('statusOrb');
 const waveform = document.getElementById('waveform');
 const expandBtn = document.getElementById('expandBtn');
 const expandIcon = document.getElementById('expandIcon');
+const modeBtn = document.getElementById('modeBtn');
 const cotPanel = document.getElementById('cotPanel');
 const cotStatus = document.getElementById('cotStatus');
 const mainContent = document.getElementById('mainContent'); // Left panel
@@ -57,11 +59,22 @@ function animateWaveform() {
                 bar.style.background = '#F59E0B';
             });
         }, 50);
+    } else if (state === 'connecting') {
+        // Connecting state - slow pulsing orange
+        waveformInterval = setInterval(() => {
+            waveformBars.forEach((bar, i) => {
+                const height = 10 + Math.sin(Date.now() / 300 + i * 0.2) * 10;
+                bar.style.height = `${height}%`;
+                bar.style.background = '#F59E0B';
+                bar.style.opacity = '0.6';
+            });
+        }, 100);
     } else {
         // Idle state
         waveformBars.forEach(bar => {
             bar.style.height = '15%';
             bar.style.background = '#7C3AED';
+            bar.style.opacity = '1';
         });
     }
 }
@@ -84,6 +97,7 @@ function setState(newState) {
 
     const statusTexts = {
         idle: 'Idle',
+        connecting: 'Connecting...',
         listening: 'Listening...',
         processing: 'Processing...',
         speaking: 'Speaking...',
@@ -115,6 +129,19 @@ function addLog(message, type = 'thought', target = 'main') {
             top: container.scrollHeight,
             behavior: 'smooth'
         });
+    }
+}
+
+// Toggle mode
+function toggleMode() {
+    mode = mode === 'fast' ? 'reasoning' : 'fast';
+    modeBtn.textContent = mode === 'fast' ? '⚡' : '🧠';
+    modeBtn.classList.toggle('mode-reasoning', mode === 'reasoning');
+    modeBtn.title = mode === 'fast' ? 'Fast Mode (Flash)' : 'Reasoning Mode (Multi-Agent)';
+
+    if (window.electronAPI) {
+        window.electronAPI.setMode(mode);
+        addLog(`Switched to ${mode === 'fast' ? 'Fast' : 'Reasoning'} Mode`, 'thought', 'main');
     }
 }
 
@@ -171,11 +198,12 @@ function handlePythonMessage(rawMessage) {
     else if (rawMessage.includes('Turn complete') || rawMessage.includes('[COMPLETE]')) {
         setState('listening');
     }
-    // Connected / System Status - ROUTE TO LOG PANEL
+    // Connected / System Status - ROUTE TO LOG PANEL (but DON'T change state for startup logs)
     else if (rawMessage.includes('Connected') || rawMessage.includes('Ready') || rawMessage.includes('Connecting')) {
         addLog(message, 'thought', 'log'); // Changed to log panel
-
-        if (rawMessage.includes('Connected')) {
+        // Only switch to listening when ACTUAL voice session connects
+        // NOT when backend startup says "Backend ready"
+        if (rawMessage.includes('Start speaking')) {
             setState('listening');
         }
     }
@@ -204,6 +232,7 @@ function init() {
 
     // Event listeners
     expandBtn.addEventListener('click', toggleExpand);
+    modeBtn.addEventListener('click', toggleMode);
     statusOrb.addEventListener('click', () => {
         if (window.electronAPI) {
             window.electronAPI.toggleSession();
@@ -212,8 +241,13 @@ function init() {
 
     // IPC listeners
     if (window.electronAPI) {
+        window.electronAPI.onSessionConnecting(() => {
+            addLog('Connecting...', 'thought', 'log');
+            setState('connecting');
+        });
+
         window.electronAPI.onSessionStarted(() => {
-            addLog('Session started', 'thought', 'main');
+            addLog('Ready!', 'thought', 'log');
             setState('listening');
         });
 

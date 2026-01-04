@@ -102,6 +102,11 @@ body {
     color: #F87171;
 }
 
+.cot-status.connecting {
+    background: rgba(245, 158, 11, 0.2);
+    color: #FBBF24;
+}
+
 .panel-content {
     flex: 1;
     overflow-y: auto;
@@ -251,6 +256,26 @@ body {
     box-shadow: 0 0 16px rgba(239, 68, 68, 0.6), 0 0 32px rgba(239, 68, 68, 0.4);
 }
 
+.orb.connecting {
+    background: #F59E0B;
+    box-shadow: 0 0 16px rgba(245, 158, 11, 0.5), 0 0 32px rgba(245, 158, 11, 0.3);
+    animation: connecting-pulse 1s ease-in-out infinite;
+}
+
+@keyframes connecting-pulse {
+
+    0%,
+    100% {
+        opacity: 0.6;
+        transform: scale(0.95);
+    }
+
+    50% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
 @keyframes pulse {
 
     0%,
@@ -339,4 +364,32 @@ body {
 
 .expand-btn.expanded svg {
     transform: rotate(180deg);
+}
+
+/* ===== Mode Toggle Button ===== */
+.mode-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    border-radius: 50%;
+    color: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 16px;
+    outline: none;
+}
+
+.mode-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.05);
+}
+
+.mode-btn.mode-reasoning {
+    background: rgba(124, 58, 237, 0.3);
+    color: #A78BFA;
+    box-shadow: 0 0 12px rgba(124, 58, 237, 0.3);
 }

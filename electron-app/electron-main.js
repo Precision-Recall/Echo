@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 let mainWindow;
 let pythonProcess;
 let sessionActive = false;
+let backendReady = false;
 
 // Window dimensions
 const WINDOW_SIZES = {
@@ -79,6 +80,21 @@ function startPythonBackend() {
     pythonProcess.stdout.on('data', (data) => {
       const message = data.toString().trim();
       console.log(`[Python] ${message}`);
+
+      // Check for Backend Readiness (MCP Connected)
+      if (message.includes('[READY] Backend ready')) {
+        console.log('[Session] Backend is ready for connections');
+        backendReady = true;
+      }
+
+      // Sync UI state with Python backend status
+      if (message.includes('Connected! Start speaking')) {
+        console.log('[Session] Connection confirmed, updating UI');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('session-started');
+        }
+      }
+
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('python-log', message);
       }
@@ -118,25 +134,54 @@ function toggleSession() {
   }
 
   if (sessionActive) {
-    // Stop session
-    console.log('[Session] Stopping session...');
-    if (pythonProcess.stdin) {
+    // Stop session - SOFT STOP (Don't kill process)
+    console.log('[Session] Sending STOP command...');
+    if (pythonProcess && !pythonProcess.killed && pythonProcess.stdin) {
       pythonProcess.stdin.write('STOP\n');
     }
+
+    // We do NOT nil pythonProcess or kill it
+    // Wait for "Session Stopped" log or assume it works
     sessionActive = false;
+
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('session-stopped');
     }
   } else {
     // Start session
-    console.log('[Session] Starting session...');
-    if (pythonProcess.stdin) {
-      pythonProcess.stdin.write('START\n');
+
+    // STRICT CHECK: Cannot start session until backend is ready (MCP connected)
+    if (!backendReady) {
+      console.log('[Session] Ignored start request - Backend not ready yet');
+      if (process.platform === 'win32') {
+        // System beep to indicate error
+        const { exec } = require('child_process');
+        exec('powershell "[console]::beep(500, 300)"');
+      }
+      return;
     }
+
+    // Session Pooling: Reuse existing process
+    if (pythonProcess && !pythonProcess.killed) {
+      console.log('[Session] Reusing existing backend...');
+      if (pythonProcess.stdin) {
+        pythonProcess.stdin.write('START\n');
+      }
+    } else {
+      console.log('[Session] Starting new backend process...');
+      startPythonBackend();
+    }
+
     sessionActive = true;
+
+    // Send connecting state immediately to show user we're working on it
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('session-started');
+      mainWindow.webContents.send('session-connecting');
     }
+
+    // NOTE: We do NOT send 'session-started' here anymore.
+    // We wait for the Python backend to log "Connected! Start speaking"
+    // This prevents the UI from showing "Listening" before the connection is ready.
   }
 }
 
@@ -180,6 +225,13 @@ ipcMain.on('set-hotkey', (event, newHotkey) => {
   setupGlobalHotkey(newHotkey);
 });
 
+ipcMain.on('set-mode', (event, mode) => {
+  console.log('[IPC] Set mode:', mode);
+  if (pythonProcess && !pythonProcess.killed && pythonProcess.stdin) {
+    pythonProcess.stdin.write(`MODE:${mode}\n`);
+  }
+});
+
 // App Lifecycle
 app.on('ready', () => {
   createWindow();
@@ -189,8 +241,13 @@ app.on('ready', () => {
 
 app.on('window-all-closed', () => {
   globalShortcut.unregisterAll();
-  if (pythonProcess && !pythonProcess.killed) {
-    pythonProcess.kill();
+  if (pythonProcess) {
+    if (process.platform === 'win32') {
+      const { exec } = require('child_process');
+      exec(`taskkill /pid ${pythonProcess.pid} /T /F`);
+    } else {
+      pythonProcess.kill('SIGKILL');
+    }
   }
   if (process.platform !== 'darwin') app.quit();
 });
@@ -201,7 +258,12 @@ app.on('activate', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
-  if (pythonProcess && !pythonProcess.killed) {
-    pythonProcess.kill();
+  if (pythonProcess) {
+    if (process.platform === 'win32') {
+      const { exec } = require('child_process');
+      exec(`taskkill /pid ${pythonProcess.pid} /T /F`);
+    } else {
+      pythonProcess.kill('SIGKILL');
+    }
   }
 });
