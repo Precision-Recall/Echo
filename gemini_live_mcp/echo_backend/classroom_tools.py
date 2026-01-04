@@ -305,6 +305,62 @@ def _load_local_creds_for_sheets():
     # Same as docs
     return _load_local_creds_for_docs()
 
+async def get_forms_service(user_email: Optional[str] = None, firebase_id_token: Optional[str] = None):
+    """
+    Authenticate and return the Google Forms service.
+    Uses the same authentication flow as Classroom.
+    
+    Required permission: https://www.googleapis.com/auth/forms.body
+    """
+    creds = None
+    if user_email and firebase_id_token:
+        try:
+            tokens = await get_tokens_from_firestore(user_email, firebase_id_token)
+            client_id = os.environ.get("GOOGLE_CLIENT_ID")
+            client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+            
+            if not client_id or not client_secret:
+                if os.path.exists(CREDENTIALS_PATH):
+                    with open(CREDENTIALS_PATH, "r") as f:
+                        creds_data = json.load(f)
+                        web_or_installed = creds_data.get("web") or creds_data.get("installed")
+                        if web_or_installed:
+                            client_id = web_or_installed.get("client_id")
+                            client_secret = web_or_installed.get("client_secret")
+            
+            creds = Credentials(
+                token=tokens.get("access_token"),
+                refresh_token=tokens.get("refresh_token"),
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=client_id,
+                client_secret=client_secret,
+                scopes=tokens.get("scope", "").split(" ") if isinstance(tokens.get("scope"), str) else []
+            )
+            print(f"📋 Using Firestore tokens for Google Forms for {user_email}")
+        except Exception as e:
+            logging.error(f"Failed to retrieve Firestore tokens for {user_email}: {e}")
+            creds = _load_local_creds_for_forms()
+    else:
+        creds = _load_local_creds_for_forms()
+    
+    if not creds:
+        raise ValueError("No valid credentials found for Google Forms service.")
+    
+    # Refresh if expired
+    if creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+        except Exception as e:
+            logging.error(f"Failed to refresh token: {e}")
+            raise
+    
+    return build("forms", "v1", credentials=creds)
+
+def _load_local_creds_for_forms():
+    """Helper to load credentials from local tokens.json for Forms"""
+    # Same as docs/sheets
+    return _load_local_creds_for_docs()
+
 # --- Tool Helper Functions ---
 
 async def list_courses(course_states=None, teacher_id=None, student_id=None, user_email=None, firebase_token=None):
@@ -407,7 +463,7 @@ async def create_coursework(course_id, title, description=None, due_date=None, d
         print(f"❌ Error in create_coursework: {e}")
         return {"error": str(e)}
 
-async def show_assignment_form(courses_data=None, course_id=None):
+async def show_assignment_form(courses_data=None, course_id=None, user_email=None, firebase_token=None):
     """
     Special tool that signals the UI to show the assignment creation form.
     This is not a real API call - it's a UI control tool.
@@ -418,6 +474,8 @@ async def show_assignment_form(courses_data=None, course_id=None):
     Args:
         courses_data: The courses array from list_courses() response
         course_id: Optional course ID to pre-select
+        user_email: User's email (not used, but accepted for consistency)
+        firebase_token: Firebase ID token (not used, but accepted for consistency)
     """
     # Handle case where courses_data might be None or not provided
     if courses_data is None:
@@ -475,10 +533,14 @@ async def create_course(name, section=None, description_heading=None, descriptio
         print(f"❌ Error creating course: {e}")
         return {"error": str(e)}
 
-async def show_course_form():
+async def show_course_form(user_email=None, firebase_token=None):
     """
     Special tool that signals the UI to show the course creation form.
     This is not a real API call - it's a UI control tool.
+    
+    Args:
+        user_email: User's email (not used, but accepted for consistency)
+        firebase_token: Firebase ID token (not used, but accepted for consistency)
     """
     print("📋 Displaying course creation form")
     
@@ -970,6 +1032,214 @@ async def create_google_sheet(title, headers=None, data=None, user_email=None, f
         print(f"❌ Error creating Google Sheet: {e}")
         return {"error": str(e)}
 
+async def create_google_form(title, description=None, questions=None, user_email=None, firebase_token=None):
+    """
+    Create a new Google Form with the specified title, description, and questions.
+    
+    Required permissions: 
+    - https://www.googleapis.com/auth/forms.body
+    - https://www.googleapis.com/auth/drive
+    
+    Args:
+        title: Title of the form (e.g., "Customer Feedback Survey")
+        description: Optional description for the form (e.g., "Please provide your feedback")
+        questions: List of question dictionaries. Each question should have:
+            - "question_text": The question text (required)
+            - "question_type": Type of question - "TEXT", "PARAGRAPH_TEXT", "MULTIPLE_CHOICE", 
+                              "CHECKBOXES", "DROPDOWN", "LINEAR_SCALE", "DATE", "TIME" (required)
+            - "required": Boolean, whether the question is required (default: False)
+            - "options": List of option strings (required for MULTIPLE_CHOICE, CHECKBOXES, DROPDOWN)
+            - "scale_low": Integer for linear scale low value (default: 1, for LINEAR_SCALE)
+            - "scale_high": Integer for linear scale high value (default: 5, for LINEAR_SCALE)
+            - "scale_low_label": Optional label for low end of scale
+            - "scale_high_label": Optional label for high end of scale
+        user_email: User's email (for Firestore token retrieval)
+        firebase_token: Firebase ID token (for Firestore token retrieval)
+    
+    Example questions:
+        [
+            {
+                "question_text": "What is your name?",
+                "question_type": "TEXT",
+                "required": True
+            },
+            {
+                "question_text": "How satisfied are you with our service?",
+                "question_type": "MULTIPLE_CHOICE",
+                "options": ["Very Satisfied", "Satisfied", "Neutral", "Dissatisfied", "Very Dissatisfied"],
+                "required": True
+            },
+            {
+                "question_text": "Rate our service from 1 to 10",
+                "question_type": "LINEAR_SCALE",
+                "scale_low": 1,
+                "scale_high": 10,
+                "scale_low_label": "Poor",
+                "scale_high_label": "Excellent",
+                "required": True
+            },
+            {
+                "question_text": "Additional comments",
+                "question_type": "PARAGRAPH_TEXT",
+                "required": False
+            }
+        ]
+    
+    Returns:
+        Dictionary with form_id, title, url, and responder_uri
+    """
+    try:
+        forms_service = await get_forms_service(user_email, firebase_token)
+        
+        # Create the form with basic info
+        form_body = {
+            "info": {
+                "title": title,
+            }
+        }
+        
+        if description:
+            form_body["info"]["documentTitle"] = title
+            
+        # Create the form
+        form = forms_service.forms().create(body=form_body).execute()
+        form_id = form.get("formId")
+        form_url = form.get("responderUri")
+        
+        print(f"📋 Created Google Form: {title} (ID: {form_id})")
+        
+        # Add description and questions if provided
+        if description or (questions and len(questions) > 0):
+            requests = []
+            
+            # Add description as first item if provided
+            if description:
+                requests.append({
+                    "createItem": {
+                        "item": {
+                            "title": description,
+                            "description": "",
+                            "textItem": {}
+                        },
+                        "location": {"index": 0}
+                    }
+                })
+            
+            # Add questions
+            if questions:
+                for idx, q in enumerate(questions):
+                    question_text = q.get("question_text", "")
+                    question_type = q.get("question_type", "TEXT").upper()
+                    required = q.get("required", False)
+                    
+                    # Build the question item
+                    item = {
+                        "title": question_text,
+                        "questionItem": {
+                            "question": {
+                                "required": required
+                            }
+                        }
+                    }
+                    
+                    # Add question-type-specific configuration
+                    if question_type == "TEXT":
+                        item["questionItem"]["question"]["textQuestion"] = {}
+                    
+                    elif question_type == "PARAGRAPH_TEXT":
+                        item["questionItem"]["question"]["textQuestion"] = {
+                            "paragraph": True
+                        }
+                    
+                    elif question_type in ["MULTIPLE_CHOICE", "CHECKBOXES", "DROPDOWN"]:
+                        options = q.get("options", [])
+                        if not options:
+                            print(f"⚠️ Warning: {question_type} question requires options, skipping question: {question_text}")
+                            continue
+                        
+                        # Map user-friendly names to Google Forms API values
+                        api_type_map = {
+                            "MULTIPLE_CHOICE": "RADIO",      # Single selection
+                            "CHECKBOXES": "CHECKBOX",         # Multiple selections
+                            "DROPDOWN": "DROP_DOWN"           # Dropdown list
+                        }
+                        
+                        choice_question = {
+                            "type": api_type_map[question_type],
+                            "options": [{"value": opt} for opt in options]
+                        }
+                        
+                        item["questionItem"]["question"]["choiceQuestion"] = choice_question
+                    
+                    elif question_type == "LINEAR_SCALE":
+                        scale_low = q.get("scale_low", 1)
+                        scale_high = q.get("scale_high", 5)
+                        scale_low_label = q.get("scale_low_label", "")
+                        scale_high_label = q.get("scale_high_label", "")
+                        
+                        item["questionItem"]["question"]["scaleQuestion"] = {
+                            "low": scale_low,
+                            "high": scale_high,
+                            "lowLabel": scale_low_label,
+                            "highLabel": scale_high_label
+                        }
+                    
+                    elif question_type == "DATE":
+                        item["questionItem"]["question"]["dateQuestion"] = {}
+                    
+                    elif question_type == "TIME":
+                        item["questionItem"]["question"]["timeQuestion"] = {}
+                    
+                    else:
+                        print(f"⚠️ Warning: Unknown question type '{question_type}', defaulting to TEXT")
+                        item["questionItem"]["question"]["textQuestion"] = {}
+                    
+                    # Calculate the position (after description if it exists)
+                    position = (idx + 1) if description else idx
+                    
+                    requests.append({
+                        "createItem": {
+                            "item": item,
+                            "location": {"index": position}
+                        }
+                    })
+                
+                # Execute batch update to add all questions
+                if requests:
+                    update_body = {"requests": requests}
+                    forms_service.forms().batchUpdate(
+                        formId=form_id,
+                        body=update_body
+                    ).execute()
+                    
+                    num_questions = len([r for r in requests if "questionItem" in r.get("createItem", {}).get("item", {})])
+                    print(f"✅ Added {num_questions} questions to form: {title}")
+        
+        edit_url = f"https://docs.google.com/forms/d/{form_id}/edit"
+        
+        # Build success message
+        num_questions = len(questions) if questions else 0
+        if num_questions > 0:
+            message = f"Successfully created Google Form: {title} with {num_questions} questions"
+        else:
+            message = f"Successfully created Google Form: {title} (empty, ready for questions)"
+        
+        return {
+            "success": True,
+            "form_id": form_id,
+            "title": title,
+            "url": form_url,  # Public responder URL
+            "edit_url": edit_url,  # Edit URL for form creator
+            "questions_added": num_questions,
+            "message": message
+        }
+        
+    except Exception as e:
+        print(f"❌ Error creating Google Form: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
 # --- Map function names to callables ---
 TOOL_FUNCTIONS = {
     "list_courses": list_courses,
@@ -985,6 +1255,7 @@ TOOL_FUNCTIONS = {
     "show_course_form": show_course_form,
     "create_google_doc": create_google_doc,
     "create_google_sheet": create_google_sheet,
+    "create_google_form": create_google_form,
 }
 
 # --- Gemini Tool Definition ---
@@ -1165,6 +1436,43 @@ CLASSROOM_TOOLS_DEF = types.Tool(
                     ),
                 },
                 required=["title"]
+            )
+        ),
+        types.FunctionDeclaration(
+            name="create_google_form",
+            description="Create a new Google Form with questions. Use this when the user asks to create a form, survey, questionnaire, quiz, or feedback form. YOU should generate appropriate questions based on the user's request. If user specifies questions directly, use them. If user asks for a form for a specific purpose (e.g., 'customer feedback form', 'event registration', 'quiz on Python'), YOU determine appropriate questions. Support multiple question types: TEXT (short answer), PARAGRAPH_TEXT (long answer), MULTIPLE_CHOICE, CHECKBOXES, DROPDOWN, LINEAR_SCALE (rating), DATE, TIME. IMPORTANT: Always generate at least 3-5 relevant questions unless user specifies otherwise. Example: User says 'create a customer satisfaction survey' -> Generate questions like 'What is your name?', 'How satisfied are you with our product?' (MULTIPLE_CHOICE with options), 'Rate our service 1-10' (LINEAR_SCALE), 'Additional comments' (PARAGRAPH_TEXT).",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "title": types.Schema(type="STRING", description="Title of the form (e.g., 'Customer Satisfaction Survey', 'Event Registration Form')"),
+                    "description": types.Schema(type="STRING", description="Optional: Brief description or instructions for the form (e.g., 'Please take a moment to share your feedback')"),
+                    "questions": types.Schema(
+                        type="ARRAY",
+                        items=types.Schema(
+                            type="OBJECT",
+                            properties={
+                                "question_text": types.Schema(type="STRING", description="The question text (e.g., 'What is your email address?')"),
+                                "question_type": types.Schema(
+                                    type="STRING", 
+                                    description="Type of question: TEXT (short answer), PARAGRAPH_TEXT (long answer), MULTIPLE_CHOICE, CHECKBOXES, DROPDOWN, LINEAR_SCALE (1-5 or 1-10 rating), DATE, TIME. Choose the most appropriate type for each question."
+                                ),
+                                "required": types.Schema(type="BOOLEAN", description="Whether this question is required (true/false). Important questions should be required."),
+                                "options": types.Schema(
+                                    type="ARRAY",
+                                    items=types.Schema(type="STRING"),
+                                    description="List of options (REQUIRED for MULTIPLE_CHOICE, CHECKBOXES, DROPDOWN). Example: ['Very Satisfied', 'Satisfied', 'Neutral', 'Dissatisfied', 'Very Dissatisfied']"
+                                ),
+                                "scale_low": types.Schema(type="INTEGER", description="For LINEAR_SCALE: lowest value (default: 1)"),
+                                "scale_high": types.Schema(type="INTEGER", description="For LINEAR_SCALE: highest value (default: 5, can be 10 for broader scales)"),
+                                "scale_low_label": types.Schema(type="STRING", description="For LINEAR_SCALE: optional label for low end (e.g., 'Poor', 'Strongly Disagree')"),
+                                "scale_high_label": types.Schema(type="STRING", description="For LINEAR_SCALE: optional label for high end (e.g., 'Excellent', 'Strongly Agree')"),
+                            },
+                            required=["question_text", "question_type"]
+                        ),
+                        description="Array of question objects. YOU MUST generate appropriate questions based on the user's request. If user says 'create a feedback form', generate relevant feedback questions. If user provides questions directly (e.g., 'ask their name, email, and satisfaction'), convert them to proper question objects. CRITICAL: Generate at least 3-5 questions for a meaningful form unless user specifies a different number."
+                    ),
+                },
+                required=["title", "questions"]
             )
         ),
     ]

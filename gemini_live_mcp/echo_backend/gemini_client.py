@@ -19,13 +19,15 @@ class GeminiLiveClient:
     def __init__(self, api_key: str):
         self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
         self.model = "gemini-2.5-flash-native-audio-preview-12-2025"
-        self.system_prompt = "You're a helpful assistant"
+        self.system_prompt = """You are a helpful, friendly AI assistant having a natural voice conversation. 
+Respond naturally and conversationally, as if talking to a friend. Keep responses concise and engaging. 
+Listen carefully and respond appropriately to what the user says. You can be interrupted at any time."""
         self.session = None
         self._ctx = None
         self._response_queue = asyncio.Queue()
         
     async def start_session(self):
-        """Start the Live API session"""
+        """Start the Live API session with automatic VAD"""
         config = types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             speech_config=types.SpeechConfig(
@@ -38,7 +40,16 @@ class GeminiLiveClient:
             system_instruction=types.Content(
                 parts=[types.Part(text=self.system_prompt)]
             ),
-            tools=[CLASSROOM_TOOLS_DEF]
+            # Enable automatic VAD for natural conversation
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    prefix_padding_ms=100,      # Capture speech onset (100ms)
+                    silence_duration_ms=300     # Detect speech completion (300ms)
+                )
+            )
+            # Note: Tools removed from Live API config due to known issues with function calling
+            # causing sessions to hang or disconnect. Tools are available in Chat API instead.
+            # tools=[CLASSROOM_TOOLS_DEF]
         )
         
         # Start session using manual context management
@@ -78,7 +89,7 @@ class GeminiLiveClient:
             raise
 
     async def receive_loop(self, callback: Callable[[dict], Any]):
-        """Listen for responses from Gemini"""
+        """Listen for responses from Gemini - runs indefinitely until cancelled"""
         if not self.session:
             raise RuntimeError("Session not started")
             
@@ -125,6 +136,7 @@ class GeminiLiveClient:
                     if server_content.turn_complete:
                         print("🏁 Turn complete received")
                         await callback({"type": "turn_complete"})
+                        # Continue listening for next turn - don't return!
                         
                 except asyncio.CancelledError:
                     print("Receive loop cancelled")
@@ -134,6 +146,9 @@ class GeminiLiveClient:
                     import traceback
                     traceback.print_exc()
                     # Continue processing other messages
+            
+            # If the async for loop ends naturally (connection closed by server)
+            print("🔌 Gemini Live API closed the connection")
                     
         except asyncio.CancelledError:
             print("Receive loop cancelled")

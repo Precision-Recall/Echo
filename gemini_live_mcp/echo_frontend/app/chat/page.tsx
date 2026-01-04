@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import { ProtectedRoute } from "../components/ProtectedRoute";
-import { UserMenu } from "../components/UserMenu";
+import { AppSidebar } from "../components/AppSidebar";
 import { ClassroomAuthPrompt } from "../components/ClassroomAuthPrompt";
 import { useClassroomAuth } from "../hooks/useClassroomAuth";
 import { Loader } from "@/components/ui/loader";
 import ChatInterface from "../ChatInterface";
+import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 
 export default function ChatPage() {
   const { hasTokens, loading: checkingTokens } = useClassroomAuth();
@@ -14,21 +15,14 @@ export default function ChatPage() {
 
   return (
     <ProtectedRoute>
-      <div className="flex flex-col h-screen bg-white">
-        {/* Header with User Menu */}
-        <header className="border-b border-gray-200 bg-white">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between items-center h-16">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center">
-                  <span className="text-white font-bold text-sm">E</span>
-                </div>
-                <span className="text-xl font-semibold text-gray-900">Echo</span>
-              </div>
-              <UserMenu />
+      <SidebarProvider>
+        <AppSidebar />
+        <SidebarInset>
+          <div className="flex h-screen flex-col">
+            {/* Minimal header with just the toggle button */}
+            <div className="flex h-12 shrink-0 items-center px-4">
+              <SidebarTrigger />
             </div>
-          </div>
-        </header>
 
         {/* Main Content */}
         <div className="flex-1 overflow-hidden">
@@ -48,6 +42,8 @@ export default function ChatPage() {
           )}
         </div>
       </div>
+        </SidebarInset>
+      </SidebarProvider>
     </ProtectedRoute>
   );
 }

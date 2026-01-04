@@ -29,8 +29,8 @@ def get_user_friendly_error(error_message: str) -> str:
 class GeminiChatClient:
     def __init__(self, api_key, enable_thinking=True):
         self.client = genai.Client(api_key=api_key)
-        # Use gemini-2.5-flash with thinking enabled via system instruction
-        self.model = "gemini-2.5-flash" 
+        # Use gemini-2.5-flash-lite for higher rate limits
+        self.model = "gemini-2.5-flash-lite" 
         self.enable_thinking = enable_thinking
         
         # User credentials for Firestore token retrieval
@@ -40,6 +40,11 @@ class GeminiChatClient:
         # Use .aio for async client
         system_prompt = (
             "You are Echo, a helpful AI assistant. You have access to Google Classroom tools. "
+            "**IMPORTANT**: Always format your responses using proper Markdown syntax:\n"
+            "- Use bullet points with '-' or '*' for lists\n"
+            "- Use **bold** for emphasis\n"
+            "- Use headings with # for sections\n"
+            "- Use code blocks with ``` for code\n"
             "When solving complex problems, think through them step by step before providing your answer. "
             "\n\n**CRITICAL Assignment Creation Workflow**: "
             "When a user wants to create an assignment, coursework, homework, or task, follow these EXACT steps:"
@@ -59,6 +64,11 @@ class GeminiChatClient:
             "\n\nBe concise and helpful."
         ) if enable_thinking else (
             "You are Echo, a helpful AI assistant. You have access to Google Classroom tools. "
+            "**IMPORTANT**: Always format your responses using proper Markdown syntax:\n"
+            "- Use bullet points with '-' or '*' for lists\n"
+            "- Use **bold** for emphasis\n"
+            "- Use headings with # for sections\n"
+            "- Use code blocks with ``` for code\n"
             "\n\n**CRITICAL Assignment Creation Workflow**: "
             "When a user wants to create an assignment, coursework, homework, or task, follow these EXACT steps:"
             "\n1. Call list_courses()"
@@ -112,7 +122,7 @@ class GeminiChatClient:
             
             while True:
                 # We use send_message_stream. The SDK manages history.
-                # Note: send_message_stream returns an async generator, don't await it
+                # Note: For gemini-1.5-flash, send_message_stream returns an async generator directly
                 response_stream = self.chat.send_message_stream(current_input)
                 
                 tool_calls = []

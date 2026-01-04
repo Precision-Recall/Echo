@@ -21,6 +21,7 @@ Frontend (Next.js) ←→ Backend (FastAPI) ←→ Gemini API
 - **Google Classroom Integration**: Built-in tools to access and create Google Classroom assignments and coursework
 - **Google Docs Creator**: Generate professionally formatted Google Docs with native styles (headings, bold, italic, lists)
 - **Google Sheets Creator**: Create structured Google Sheets with headers and data
+- **Google Forms Creator**: Intelligent form generation with multiple question types (surveys, quizzes, feedback forms)
 - **Assignment & Course Creation**: Structured forms for creating classroom content
 - **Native Audio Support**: Uses Gemini 2.5 Flash Native Audio for voice
 - **Dual Modes**: Separate voice and chat modes with independent connections
@@ -297,7 +298,7 @@ See [CODE_QUALITY_IMPROVEMENTS.md](./CODE_QUALITY_IMPROVEMENTS.md) for detailed 
 - **System Prompt**: "You are Echo, a helpful AI assistant with access to Google Classroom."
 
 ### Chat Mode (`/ws/chat`)
-- **Model**: `gemini-2.5-flash`
+- **Model**: `gemini-2.5-flash-lite`
 - **System Prompt**: "You are Echo, a helpful AI assistant. You have access to Google Classroom tools."
 - **Tools**: Google Classroom integration (list courses, assignments, students, etc.)
 
@@ -358,14 +359,52 @@ Creates Google Spreadsheets with structured data:
 - Optional data rows
 - Professional formatting
 - Ready to edit and share
+- **Smart Row Count**: AI respects user-specified row counts (e.g., "create 50 rows")
 
 **Example Usage:**
 ```
-User: "Create a spreadsheet to track student grades"
+User: "Create a spreadsheet with 30 rows to track student grades"
 AI: Determines appropriate structure (Name, Email, Assignment 1, Assignment 2, Final)
-Tool: Creates Google Sheet with headers and optional sample data
+Tool: Creates Google Sheet with headers and EXACTLY 30 rows of sample data
 Result: Returns shareable Google Sheets link
 ```
+
+### 📋 Google Forms Creator
+**Tool**: `create_google_form(title, description, questions)`
+
+Creates intelligent Google Forms with multiple question types:
+- **8 Question Types**: TEXT, PARAGRAPH_TEXT, MULTIPLE_CHOICE, CHECKBOXES, DROPDOWN, LINEAR_SCALE, DATE, TIME
+- **Smart Generation**: AI generates appropriate questions based on form purpose
+- **Flexible Input**: Provide specific questions or describe the purpose
+- **Auto-Configuration**: AI chooses best question types and options
+
+**Example Usage:**
+```
+User: "Create a customer satisfaction survey"
+AI: Generates appropriate questions with ratings, multiple choice, and feedback
+Tool: Creates Google Form with:
+  - "What is your name?" (TEXT, required)
+  - "How satisfied are you?" (MULTIPLE_CHOICE: Very Satisfied to Very Dissatisfied)
+  - "Rate our service 1-10" (LINEAR_SCALE with labels)
+  - "Additional comments" (PARAGRAPH_TEXT)
+Result: Returns public form link and edit link
+```
+
+**Question Types:**
+- **TEXT** - Short answer
+- **PARAGRAPH_TEXT** - Long answer
+- **MULTIPLE_CHOICE** - Single selection
+- **CHECKBOXES** - Multiple selections
+- **DROPDOWN** - Compact selection
+- **LINEAR_SCALE** - Rating (1-5, 1-10, etc.)
+- **DATE** / **TIME** - Date/time pickers
+
+**Common Use Cases:**
+- Customer feedback surveys
+- Event registration forms
+- Quiz and assessments
+- Course evaluations
+- Opinion surveys
 
 ### 🔐 Authentication
 All tools use OAuth tokens stored in Firebase Firestore:
@@ -375,7 +414,9 @@ All tools use OAuth tokens stored in Firebase Firestore:
 - No credentials exposed to frontend
 
 ### 📚 Documentation
-For detailed information about the Docs/Sheets creator tools, see [GOOGLE_DOCS_SHEETS_TOOLS.md](./GOOGLE_DOCS_SHEETS_TOOLS.md)
+- **Docs/Sheets**: [GOOGLE_DOCS_SHEETS_TOOLS.md](./GOOGLE_DOCS_SHEETS_TOOLS.md)
+- **Google Forms**: [GOOGLE_FORMS_FEATURE.md](./GOOGLE_FORMS_FEATURE.md)
+- **Sheets Row Count Fix**: [SHEETS_ROW_COUNT_FIX.md](./SHEETS_ROW_COUNT_FIX.md)
 
 ## Google Classroom Setup (Optional)
 

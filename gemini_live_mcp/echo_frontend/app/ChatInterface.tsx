@@ -1,14 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGeminiWebSocket, WebSocketMessage } from './hooks/useGeminiWebSocket';
-import { useAudioCapture } from './hooks/useAudioCapture';
-import { useAudioPlayback } from './hooks/useAudioPlayback';
 import { PromptInput, PromptInputActions, PromptInputAction, PromptInputTextarea } from "@/components/ui/prompt-input";
 import { Button } from "@/components/ui/button";
 import { Loader } from "@/components/ui/loader";
 import { Markdown } from "@/components/ui/markdown";
-import { ArrowUp, Square, Mic, X } from "lucide-react";
+import { ArrowUp, Square, X } from "lucide-react";
 import { 
   ChainOfThought, 
   ChainOfThoughtContent, 
@@ -18,6 +16,8 @@ import {
 } from "@/components/ui/chain-of-thought";
 import { AssignmentForm, AssignmentData } from "./components/AssignmentForm";
 import { CourseForm, CourseData } from "./components/CourseForm";
+import { MessageWithLinks } from "./components/LinkButton";
+import { ToolExecutionSteps } from "./components/ToolExecutionSteps";
 import { useAuth } from "./contexts/AuthContext";
 
 interface ToolStep {
@@ -77,7 +77,7 @@ function getUserFriendlyError(errorMessage: string): string {
 
 export default function ChatInterface() {
   const { user } = useAuth();
-  const [isVoiceMode, setIsVoiceMode] = useState(false);
+  // Voice mode removed - chat only
   const [statusText, setStatusText] = useState('I\'m here and ready to help. Just let me know what you need.');
   
   // Chat State
@@ -91,32 +91,7 @@ export default function ChatInterface() {
   // Thread ID for conversation memory
   const [threadId] = useState(() => `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
 
-  // --- 1. LIVE AUDIO CONNECTION ---
-  const { 
-    connectionState: liveConnectionState, 
-    sendAudio, 
-    connect: connectLive, 
-    disconnect: disconnectLive 
-  } = useGeminiWebSocket('/ws/live', (message) => {
-      switch (message.type) {
-        case 'audio':
-          if (message.data) {
-            setStatusText('Gemini is speaking...');
-            playAudio(message.data);
-          }
-          break;
-        case 'connected':
-          setStatusText('Connected. Tap microphone to speak.');
-          break;
-        case 'error':
-          const friendlyError = getUserFriendlyError(message.data || 'Unknown error');
-          setStatusText(friendlyError);
-          break;
-        case 'turn_complete':
-          setStatusText('Gemini finished speaking.');
-          break;
-      }
-  });
+  // Voice mode removed - only chat WebSocket remains
 
   // --- 2. CHAT CONNECTION ---
   const { 
@@ -202,35 +177,23 @@ export default function ChatInterface() {
           // AI has decided to show the assignment form
           const courseId = message.data?.course_id || '';
           const courses = message.data?.courses || [];
-          console.log('📝 Received courses for dropdown:', courses.length, courses);
+          console.log('📝 [FORM] Received show_assignment_form with', courses.length, 'courses');
           
           setMessages(prev => {
-            // Check if last message already has form (prevent duplicates)
-            const lastMsg = prev[prev.length - 1];
-            if (lastMsg && lastMsg.showAssignmentForm) {
-              console.warn('Form already shown, skipping duplicate');
+            // Check if ANY message already has an assignment form (prevent duplicates)
+            const hasExistingForm = prev.some(msg => msg.showAssignmentForm);
+            if (hasExistingForm) {
+              console.warn('⚠️ [FORM] Assignment form already exists, skipping duplicate');
               return prev;
             }
             
-            // If last message is from model, update it to include form
-            if (lastMsg && lastMsg.role === 'model' && !lastMsg.text) {
-              return [
-                ...prev.slice(0, -1),
-                {
-                  ...lastMsg,
-                  text: '📝 Please select a course and fill in the assignment details below:',
-                  showAssignmentForm: true,
-                  assignmentCourseId: courseId,
-                  assignmentCourses: courses
-                }
-              ];
-            }
+            console.log('✅ [FORM] Creating assignment form');
             
-            // Otherwise create new message
+            // Always create a new message for the form
             return [
               ...prev,
               {
-                id: Date.now().toString(),
+                id: `form-${Date.now()}`,
                 role: 'model',
                 text: '📝 Please select a course and fill in the assignment details below:',
                 showAssignmentForm: true,
@@ -245,33 +208,23 @@ export default function ChatInterface() {
         
         case 'show_course_form':
           // AI has decided to show the course creation form
-          console.log('📚 Showing course creation form');
+          console.log('📚 [FORM] Received show_course_form');
           
           setMessages(prev => {
-            // Check if last message already has form (prevent duplicates)
-            const lastMsg = prev[prev.length - 1];
-            if (lastMsg && lastMsg.showCourseForm) {
-              console.warn('Course form already shown, skipping duplicate');
+            // Check if ANY message already has a course form (prevent duplicates)
+            const hasExistingForm = prev.some(msg => msg.showCourseForm);
+            if (hasExistingForm) {
+              console.warn('⚠️ [FORM] Course form already exists, skipping duplicate');
               return prev;
             }
             
-            // If last message is from model, update it to include form
-            if (lastMsg && lastMsg.role === 'model' && !lastMsg.text) {
-              return [
-                ...prev.slice(0, -1),
-                {
-                  ...lastMsg,
-                  text: '📚 Let me help you create a new course. Please fill in the details below:',
-                  showCourseForm: true
-                }
-              ];
-            }
+            console.log('✅ [FORM] Creating course form');
             
-            // Otherwise create new message
+            // Always create a new message for the form
             return [
               ...prev,
               {
-                id: Date.now().toString(),
+                id: `form-${Date.now()}`,
                 role: 'model',
                 text: '📚 Let me help you create a new course. Please fill in the details below:',
                 showCourseForm: true
@@ -295,15 +248,7 @@ export default function ChatInterface() {
     }
   }, [connectChat, user]);
 
-  // Audio playback
-  const { playAudio, isPlaying, error: playbackError } = useAudioPlayback();
-
-  // Audio capture
-  const { isRecording, startRecording, stopRecording, error: captureError } = useAudioCapture(
-    (audioData: string) => {
-      sendAudio(audioData, false);
-    }
-  );
+  // Voice mode removed
 
   // Chat Submission
   const handleChatSubmit = () => {
@@ -355,15 +300,20 @@ Work Type: ${data.work_type}`;
   
   // Handle assignment form cancellation
   const handleAssignmentCancel = (messageId: string) => {
+    console.log('❌ [FORM] Cancelling assignment form:', messageId);
     // Remove the form message and add cancellation message
-    setMessages(prev => [
-      ...prev.filter(msg => msg.id !== messageId),
+    setMessages(prev => {
+      const filtered = prev.filter(msg => msg.id !== messageId);
+      console.log('📊 [FORM] Messages after cancel:', filtered.length);
+      return [
+        ...filtered,
       {
         id: Date.now().toString(),
         role: 'model',
         text: 'Assignment creation cancelled.'
       }
-    ]);
+      ];
+    });
   };
   
   // Handle course form submission
@@ -389,15 +339,20 @@ Room: ${data.room || 'N/A'}`;
   };
   
   const handleCourseCancel = (messageId: string) => {
+    console.log('❌ [FORM] Cancelling course form:', messageId);
     // Remove the form message and add cancellation message
-    setMessages(prev => [
-      ...prev.filter(msg => msg.id !== messageId),
+    setMessages(prev => {
+      const filtered = prev.filter(msg => msg.id !== messageId);
+      console.log('📊 [FORM] Messages after cancel:', filtered.length);
+      return [
+        ...filtered,
       {
         id: Date.now().toString(),
         role: 'model',
         text: 'Course creation cancelled.'
       }
-    ]);
+      ];
+    });
   };
 
   // Scroll to bottom when messages change or loading state changes
@@ -405,65 +360,15 @@ Room: ${data.room || 'N/A'}`;
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isChatLoading, isToolProcessing]);
 
-  // Handle LIVE session toggle
-  const handleLiveSessionToggle = async () => {
-    if (liveConnectionState === 'connected') {
-      stopRecording();
-      disconnectLive();
-      setStatusText('Disconnected');
-    } else {
-      connectLive();
-      setStatusText('Connecting...');
-    }
-  };
+  // Voice mode removed
 
-  // Auto-start recording when LIVE connected
-  useEffect(() => {
-    if (liveConnectionState === 'connected' && !isRecording) {
-      startRecording();
-      setStatusText('Listening...');
-    }
-  }, [liveConnectionState, isRecording]);
-
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      stopRecording();
-      disconnectLive();
-      // Chat stays connected typically, but we can disconnect on unmount
-    };
-  }, []);
-
-  // Chat View (Default)
-  if (!isVoiceMode) {
+  // Chat View
     return (
-      <div className="min-h-screen bg-white text-gray-900 flex flex-col">
-        {/* Header */}
-        <header className="fixed top-0 left-0 right-0 bg-white/80 backdrop-blur-sm border-b border-gray-200 z-50">
-          <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600" />
-              <h1 className="text-xl font-semibold text-gray-900">Echo</h1>
-            </div>
-            
-            <Button
-              onClick={() => {
-                setIsVoiceMode(true);
-                handleLiveSessionToggle();
-              }}
-              className="bg-gray-100 hover:bg-gray-200 text-gray-900 rounded-full px-4 py-2 flex items-center gap-2 transition-colors"
-              variant="ghost"
-            >
-              <Mic className="w-4 h-4" />
-              Voice Mode
-            </Button>
-          </div>
-        </header>
-
-        {/* Main Content */}
-        <main className="flex-1 flex flex-col items-center justify-center px-6 pt-20 pb-32">
+      <div className="h-full bg-white text-gray-900 flex flex-col overflow-hidden">
+        {/* Main Content - Scrollable Area */}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden px-6 pt-6 pb-32">
           {messages.length === 0 ? (
-            <div className="text-center max-w-2xl">
+            <div className="text-center max-w-2xl mx-auto mt-20">
               <h2 className="text-3xl font-medium text-gray-900 mb-4">
                 Ask anything
               </h2>
@@ -472,39 +377,13 @@ Room: ${data.room || 'N/A'}`;
               </p>
             </div>
           ) : (
-            <div className="w-full max-w-3xl space-y-6 overflow-y-auto">
+            <div className="w-full max-w-3xl mx-auto space-y-6 pb-4">
               {messages.map((msg) => (
                 <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} gap-1`}>
-                  {/* Tool Call Dropdown - Outside bubble, small font */}
+                  {/* Tool Execution Steps - Left Aligned with AI Message */}
                   {msg.toolSteps && msg.toolSteps.length > 0 && msg.role === 'model' && (
-                    <div className="px-2">
-                      <ChainOfThought>
-                        <ChainOfThoughtStep>
-                          <ChainOfThoughtTrigger className="text-xs text-gray-500 font-medium">
-                            🔧 Tool used: <span className="font-mono text-blue-600">{msg.toolSteps[0].tool}</span>
-                          </ChainOfThoughtTrigger>
-                          <ChainOfThoughtContent>
-                            {msg.toolSteps.map((step, idx) => (
-                              <div key={idx} className="space-y-2">
-                                <ChainOfThoughtItem>
-                                  <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Input</span>
-                                  <pre className="text-xs bg-gray-50 p-2 rounded mt-1 overflow-x-auto border border-gray-200">
-                                    {JSON.stringify(step.args, null, 2)}
-                                  </pre>
-                                </ChainOfThoughtItem>
-                                {step.result && (
-                                  <ChainOfThoughtItem>
-                                    <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Result</span>
-                                    <pre className="text-xs bg-green-50 p-2 rounded mt-1 overflow-x-auto border border-green-200 text-green-800">
-                                      {JSON.stringify(step.result, null, 2)}
-                                    </pre>
-                                  </ChainOfThoughtItem>
-                                )}
-                              </div>
-                            ))}
-                          </ChainOfThoughtContent>
-                        </ChainOfThoughtStep>
-                      </ChainOfThought>
+                    <div className="max-w-[85%]">
+                      <ToolExecutionSteps steps={msg.toolSteps} />
                     </div>
                   )}
                   
@@ -535,21 +414,20 @@ Room: ${data.room || 'N/A'}`;
                       </div>
                     )}
                     
-                    {/* Message Content with Markdown */}
+                    {/* Message Content - Markdown with proper formatting */}
                     {msg.text && !msg.showAssignmentForm && !msg.showCourseForm && (
-                      <Markdown 
-                        className="prose prose-sm max-w-none prose-headings:font-semibold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-p:text-gray-900 prose-li:text-gray-900 prose-strong:text-gray-900"
-                      >
+                      msg.text.match(/https:\/\/docs\.google\.com\/(forms|document|spreadsheets)/) ? (
+                        <MessageWithLinks text={msg.text} />
+                      ) : (
+                        <Markdown className="markdown-content">
                         {msg.text}
                       </Markdown>
+                      )
                     )}
                     
                     {/* Assignment Form - Inline */}
-                    {msg.showAssignmentForm && (
-                      <div className="space-y-3">
-                        {msg.text && (
-                          <p className="text-sm text-gray-700 mb-3">{msg.text}</p>
-                        )}
+                    {msg.showAssignmentForm && !msg.showCourseForm && (
+                      <div className="w-full">
                         <AssignmentForm
                           courseId={msg.assignmentCourseId}
                           courses={msg.assignmentCourses}
@@ -560,11 +438,8 @@ Room: ${data.room || 'N/A'}`;
                     )}
                     
                     {/* Course Form - Inline */}
-                    {msg.showCourseForm && (
-                      <div className="space-y-3">
-                        {msg.text && (
-                          <p className="text-sm text-gray-700 mb-3">{msg.text}</p>
-                        )}
+                    {msg.showCourseForm && !msg.showAssignmentForm && (
+                      <div className="w-full">
                         <CourseForm
                           onSubmit={(data) => handleCourseSubmit(msg.id, data)}
                           onCancel={() => handleCourseCancel(msg.id)}
@@ -604,14 +479,14 @@ Room: ${data.room || 'N/A'}`;
               className="w-full"
             >
               <PromptInputTextarea placeholder="Ask anything..." />
-              <PromptInputActions className="justify-end pt-2">
+              <PromptInputActions className="justify-end pt-2 gap-2">
                 <PromptInputAction
                   tooltip={isChatLoading ? "Thinking..." : "Send message"}
                 >
                   <Button
                     variant="default"
                     size="icon"
-                    className="h-8 w-8 rounded-full"
+                    className="h-8 w-8 rounded-full bg-gray-900 hover:bg-gray-800"
                     onClick={handleChatSubmit}
                     disabled={isChatLoading}
                   >
@@ -625,82 +500,6 @@ Room: ${data.room || 'N/A'}`;
               </PromptInputActions>
             </PromptInput>
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Voice View
-  return (
-    <div className="min-h-screen bg-white text-gray-900 flex flex-col items-center justify-center relative">
-      {/* Settings Icon */}
-      <button className="absolute top-6 right-6 w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors">
-        <svg className="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      </button>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col items-center justify-center space-y-8 px-6">
-        <p className="text-xl text-gray-600 text-center max-w-2xl">
-          {statusText}
-        </p>
-
-        {/* Animated Circle */}
-        <div className="relative flex items-center justify-center">
-          <div className={`absolute inset-0 rounded-full transition-all duration-500 ${
-            isRecording || isPlaying 
-              ? 'bg-gradient-to-br from-blue-200 to-purple-200 blur-3xl opacity-60 scale-150' 
-              : 'bg-gray-100 blur-2xl opacity-40'
-          } w-80 h-80`} />
-          
-          <div className={`relative z-10 w-64 h-64 rounded-full border-4 transition-all duration-500 flex items-center justify-center ${
-            isRecording || isPlaying
-              ? 'border-blue-400 bg-gradient-to-br from-blue-50 to-purple-50 scale-105' 
-              : 'border-gray-300 bg-white'
-          }`}>
-            <div className={`w-48 h-48 rounded-full transition-all duration-700 ${
-              isRecording || isPlaying
-                ? 'bg-gradient-to-br from-blue-100 to-purple-100 animate-pulse' 
-                : 'bg-gray-50'
-            }`} />
-          </div>
-        </div>
-
-        {/* End Session Button */}
-        <Button
-          onClick={() => {
-            handleLiveSessionToggle();
-            setIsVoiceMode(false);
-          }}
-          className="bg-gray-900 hover:bg-gray-800 text-white px-6 py-2 rounded-full"
-        >
-          End Session
-        </Button>
-      </div>
-
-      {/* Bottom Controls */}
-      <div className="pb-8 flex items-center gap-4">
-        <button 
-          onClick={() => {
-            handleLiveSessionToggle();
-            setIsVoiceMode(false);
-          }}
-          className="w-12 h-12 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors"
-        >
-          <X className="w-5 h-5 text-gray-700" />
-        </button>
-        
-        <button 
-          className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${
-            liveConnectionState === 'connected'
-              ? 'bg-blue-500 hover:bg-blue-600 text-white scale-110' 
-              : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
-          }`}
-        >
-          <Mic className="w-5 h-5" />
-        </button>
       </div>
     </div>
   );

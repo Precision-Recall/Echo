@@ -12,7 +12,7 @@ export interface UseAudioCaptureReturn {
 const SAMPLE_RATE = 16000;
 
 export function useAudioCapture(
-  onAudioData: (audioData: string) => void
+  onAudioData: (audioData: string, turnComplete?: boolean) => void
 ): UseAudioCaptureReturn {
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);

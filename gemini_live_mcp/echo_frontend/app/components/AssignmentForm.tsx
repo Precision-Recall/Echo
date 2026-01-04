@@ -52,7 +52,7 @@ export function AssignmentForm({ courseId = '', courses = [], onSubmit, onCancel
   };
 
   return (
-    <div className="mb-4">
+    <div className="w-full max-w-2xl">
       {/* Header */}
       <div className="mb-4">
         <h3 className="text-base font-semibold text-gray-900 mb-1">Create Assignment</h3>
