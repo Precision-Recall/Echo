@@ -25,6 +25,7 @@ class AudioManager:
         self.output_queue = queue.Queue()
         self._is_recording = False
         self._is_playing = False
+        self._writing_active = False # Flag to track active write operation
         
     async def __aenter__(self):
         return self
@@ -42,7 +43,12 @@ class AudioManager:
         
         def callback(in_data, frame_count, time_info, status):
             if self._is_recording:
-                loop.call_soon_threadsafe(self.input_queue.put_nowait, in_data)
+                # Half-Duplex: Drop input if we are currently speaking (writing to output)
+                # or if there is pending audio in the output queue.
+                is_speaking = self._writing_active or not self.output_queue.empty()
+                
+                if not is_speaking:
+                    loop.call_soon_threadsafe(self.input_queue.put_nowait, in_data)
             return (None, pyaudio.paContinue)
 
         self.input_stream = self.p.open(
@@ -63,6 +69,20 @@ class AudioManager:
             self.input_stream.stop_stream()
             self.input_stream.close()
             self.input_stream = None
+    
+    def pause_recording(self):
+        """Pause recording without closing stream (faster resume)"""
+        self._is_recording = False
+        # Clear any pending audio
+        while not self.input_queue.empty():
+            try:
+                self.input_queue.get_nowait()
+            except:
+                break
+    
+    def resume_recording(self):
+        """Resume recording after pause"""
+        self._is_recording = True
 
     async def get_audio_chunk(self):
         """Get next chunk of audio data from mic"""
@@ -92,9 +112,14 @@ class AudioManager:
         while self._is_playing and self.output_stream:
             try:
                 # Block waiting for audio data
+                # Block waiting for audio data
                 data = self.output_queue.get(timeout=0.5)
                 if data and self.output_stream:
-                    self.output_stream.write(data)
+                    self._writing_active = True
+                    try:
+                        self.output_stream.write(data)
+                    finally:
+                        self._writing_active = False
             except queue.Empty:
                 continue  # No data, keep waiting
             except Exception as e:

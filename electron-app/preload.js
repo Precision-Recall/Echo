@@ -8,8 +8,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Window control
     resizeWindow: (size) => ipcRenderer.send('resize-window', size),
     setHotkey: (hotkey) => ipcRenderer.send('set-hotkey', hotkey),
+    setMode: (mode) => ipcRenderer.send('set-mode', mode),
 
     // Event listeners
+    onSessionConnecting: (callback) => ipcRenderer.on('session-connecting', callback),
     onSessionStarted: (callback) => ipcRenderer.on('session-started', callback),
     onSessionStopped: (callback) => ipcRenderer.on('session-stopped', callback),
     onSessionEnded: (callback) => ipcRenderer.on('session-ended', callback),
@@ -18,6 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // Cleanup
     removeAllListeners: () => {
+        ipcRenderer.removeAllListeners('session-connecting');
         ipcRenderer.removeAllListeners('session-started');
         ipcRenderer.removeAllListeners('session-stopped');
         ipcRenderer.removeAllListeners('session-ended');

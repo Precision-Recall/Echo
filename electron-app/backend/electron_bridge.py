@@ -81,7 +81,7 @@ class BridgeSession:
             self.agent = DesktopAgent(
                 gemini_api_key=self.api_key,
                 thinking_logger=self.logger,
-                mode=AgentMode.VOICE
+                mode=AgentMode.FAST  # Default to FAST, UI toggle can switch to REASONING
             )
             
             # This connects to MCP (matches main.py logic)
@@ -141,6 +141,13 @@ async def stdin_reader(bridge):
                     bridge.session_task = asyncio.create_task(bridge.start_session())
             elif cmd == 'STOP':
                 await bridge.stop()
+            elif cmd.startswith('MODE:'):
+                try:
+                    mode_str = cmd.split(':', 1)[1].strip()
+                    if bridge.agent:
+                        bridge.agent.set_mode(mode_str)
+                except Exception as e:
+                    print(f"[Bridge] Error setting mode: {e}", flush=True)
             elif cmd == 'QUIT':
                 await bridge.stop()
                 break
