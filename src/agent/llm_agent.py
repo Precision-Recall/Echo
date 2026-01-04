@@ -20,6 +20,7 @@ from .thinking_logger import ThinkingLogger
 class AgentMode(Enum):
     FAST = "fast"           # Fast execution (Default)
     REASONING = "reasoning" # Multi-agent planning
+    VOICE = "voice"         # Voice interaction via Gemini Live
 
 @dataclass
 class ModelConfig:
@@ -199,16 +200,19 @@ Be precise with coordinates and wait appropriately between actions."""
         # Brief yield to allow any pending mode IPC commands to be processed
         await asyncio.sleep(0.1)
         
-        mode_str = self.current_mode.value  # "fast" or "reasoning"
+        mode_str = self.current_mode.value  # "fast", "reasoning", or "voice"
         self.logger.log_thought(f"📍 Session Mode: {mode_str.upper()}")
+        
+        # VOICE mode behaves like FAST mode (direct tool execution)
+        use_direct_tools = mode_str in ("fast", "voice")
         
         # Create Voice Client with explicit mode
         client = GeminiLiveClient(
             api_key=self.gemini_api_key,
             model_name=voice_model,
             logger=self.logger,
-            mode=mode_str,  # Pass mode explicitly
-            mcp_client=self.mcp_client if mode_str == "fast" else None,
+            mode="fast" if use_direct_tools else "reasoning",  # Map voice -> fast
+            mcp_client=self.mcp_client if use_direct_tools else None,
             multi_agent_graph=multi_agent_graph
         )
         
