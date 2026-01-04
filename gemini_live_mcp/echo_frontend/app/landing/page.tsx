@@ -50,7 +50,7 @@ export default function LandingPage() {
           <p className="text-xl text-gray-600 mb-12 max-w-2xl mx-auto leading-relaxed">
             Manage assignments, create courses, and interact with Google Classroom using natural language. Powered by Gemini AI.
           </p>
-          
+
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
             <Button
               onClick={() => router.push('/login')}
@@ -60,6 +60,7 @@ export default function LandingPage() {
               Get Started
             </Button>
             <Button
+              onClick={() => router.push('/learn-more')}
               variant="outline"
               size="lg"
               className="border-gray-300 text-gray-700 hover:bg-gray-50 px-8 py-6 text-lg rounded-xl"
