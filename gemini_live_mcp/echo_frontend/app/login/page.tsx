@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sparkles, Mail, Lock, AlertCircle } from "lucide-react";
+import Image from "next/image";
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -61,8 +62,14 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo and Title */}
         <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-gray-900 rounded-2xl mb-4">
-            <Sparkles className="w-7 h-7 text-white" />
+          <div className="inline-flex items-center justify-center mb-4">
+            <Image
+              src="/logo.png"
+              alt="Echo Logo"
+              width={56}
+              height={56}
+              className="rounded-2xl"
+            />
           </div>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome to Echo</h1>
           <p className="text-gray-600">

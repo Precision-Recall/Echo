@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { Button } from "@/components/ui/button";
+import Image from "next/image";
 import {
     Sparkles,
     Monitor,
@@ -31,10 +32,14 @@ export default function LearnMorePage() {
             <header className="border-b border-gray-100 sticky top-0 bg-white/80 backdrop-blur-sm z-50">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex justify-between items-center h-16">
-                        <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center">
-                                <Sparkles className="w-5 h-5 text-white" />
-                            </div>
+                        <div className="flex items-center gap-3">
+                            <Image
+                                src="/logo.png"
+                                alt="Echo Logo"
+                                width={40}
+                                height={40}
+                                className="rounded-lg"
+                            />
                             <span className="text-xl font-semibold text-gray-900">Echo</span>
                         </div>
                         <div className="flex items-center gap-3">
@@ -101,25 +106,15 @@ export default function LearnMorePage() {
                                 and diagnose system issues — all hands-free powered by Gemini Live.
                             </p>
 
-                            {/* Video Placeholder */}
-                            <div className="bg-gray-900 rounded-2xl aspect-video mb-6 flex items-center justify-center relative overflow-hidden">
-                                <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 to-violet-900/20"></div>
-                                <div className="text-center z-10">
-                                    <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3 backdrop-blur-sm">
-                                        <Play className="w-8 h-8 text-white ml-1" />
-                                    </div>
-                                    <p className="text-white/80 text-sm">Demo Video Coming Soon</p>
-                                </div>
-                                {/* TUI Preview Overlay */}
-                                <div className="absolute bottom-4 left-4 right-4 bg-gray-950/90 rounded-lg p-3 font-mono text-xs">
-                                    <div className="flex items-center gap-2 text-purple-400 mb-1">
-                                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                                        🎙️ Listening...
-                                    </div>
-                                    <div className="text-gray-400">
-                                        <span className="text-violet-400">User:</span> "Open Chrome and search for weather"
-                                    </div>
-                                </div>
+                            {/* YouTube Video Embed */}
+                            <div className="rounded-2xl aspect-video mb-6 overflow-hidden">
+                                <iframe
+                                    className="w-full h-full"
+                                    src="https://www.youtube.com/embed/KY44oYqRFvw"
+                                    title="Echo Desktop & TUI Demo"
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                    allowFullScreen
+                                ></iframe>
                             </div>
 
                             {/* Key Features */}
@@ -235,27 +230,15 @@ export default function LearnMorePage() {
                                 organize courses, and check student progress through chat.
                             </p>
 
-                            {/* Video Placeholder */}
-                            <div className="bg-gray-900 rounded-2xl aspect-video mb-6 flex items-center justify-center relative overflow-hidden">
-                                <div className="absolute inset-0 bg-gradient-to-br from-gray-800/20 to-slate-800/20"></div>
-                                <div className="text-center z-10">
-                                    <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3 backdrop-blur-sm">
-                                        <Play className="w-8 h-8 text-white ml-1" />
-                                    </div>
-                                    <p className="text-white/80 text-sm">Demo Video Coming Soon</p>
-                                </div>
-                                {/* Chat Preview */}
-                                <div className="absolute bottom-4 left-4 right-4 bg-white/95 rounded-lg p-3 text-xs">
-                                    <div className="flex items-start gap-2">
-                                        <div className="w-6 h-6 bg-gray-900 rounded-full flex items-center justify-center flex-shrink-0">
-                                            <Sparkles className="w-3 h-3 text-white" />
-                                        </div>
-                                        <div className="text-gray-700">
-                                            Created assignment <span className="font-medium">"Math Quiz Ch.5"</span> in
-                                            <span className="font-medium"> Algebra 101</span>, due Friday at 3pm.
-                                        </div>
-                                    </div>
-                                </div>
+                            {/* YouTube Video Embed */}
+                            <div className="rounded-2xl aspect-video mb-6 overflow-hidden">
+                                <iframe
+                                    className="w-full h-full"
+                                    src="https://www.youtube.com/embed/8Cu4vYCKsfk?si=lboyBUR5_35taESf"
+                                    title="Echo Web Version Demo"
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                    allowFullScreen
+                                ></iframe>
                             </div>
 
                             {/* Key Features */}

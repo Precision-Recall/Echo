@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from "@/components/ui/button";
 import { Sparkles, MessageSquare, Zap } from "lucide-react";
+import Image from "next/image";
 
 export default function LandingPage() {
   const { user, loading } = useAuth();
@@ -22,10 +23,14 @@ export default function LandingPage() {
       <header className="border-b border-gray-100">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center">
-                <Sparkles className="w-5 h-5 text-white" />
-              </div>
+            <div className="flex items-center gap-3">
+              <Image
+                src="/logo.png"
+                alt="Echo Logo"
+                width={40}
+                height={40}
+                className="rounded-lg"
+              />
               <span className="text-xl font-semibold text-gray-900">Echo</span>
             </div>
             <Button
