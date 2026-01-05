@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Sparkles, Mail, Lock, AlertCircle } from "lucide-react";
 import Image from "next/image";
 
+export const dynamic = 'force-dynamic';
+
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
