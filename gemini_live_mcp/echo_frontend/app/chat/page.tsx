@@ -9,8 +9,6 @@ import { Loader } from "@/components/ui/loader";
 import ChatInterface from "../ChatInterface";
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 
-export const dynamic = 'force-dynamic';
-
 export default function ChatPage() {
   const { hasTokens, loading: checkingTokens } = useClassroomAuth();
   const [showPrompt, setShowPrompt] = useState(true);

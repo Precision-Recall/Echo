@@ -7,8 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Sparkles, MessageSquare, Zap } from "lucide-react";
 import Image from "next/image";
 
-export const dynamic = 'force-dynamic';
-
 export default function LandingPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
