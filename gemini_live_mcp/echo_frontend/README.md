@@ -2,7 +2,7 @@
 
 > Your AI-powered Google Classroom assistant
 
-Echo is a modern web application that lets educators and students interact with Google Classroom using natural language. Powered by Google's Gemini AI, Echo transforms classroom management from tedious clicks into simple conversations.
+Echo is a modern web application that lets educators and students interact with Google Classroom using natural language. Powered by Google's Gemini AI, Echo transforms classroom management from tedious clicks into simple conversations- .
 
 ![Next.js](https://img.shields.io/badge/Next.js-16.1.1-black?logo=next.js)
 ![React](https://img.shields.io/badge/React-19-blue?logo=react)

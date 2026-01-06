@@ -5,7 +5,7 @@ This guide will help you set up Firebase Authentication with a minimalistic Perp
 
 ## 📦 Installation
 
-### 1. Install Firebase
+### 1. Install Firebase,
 ```bash
 npm install firebase
 ```
