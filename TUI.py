@@ -88,26 +88,13 @@ async def test_agent(command: str, mode: AgentMode = AgentMode.FAST):
                     if type_ == "result": style = "green"
                     tui.add_log(message, style)
             
-            thinking_logger = ThinkingLogger(ui_callback=log_callback)
+            # Update the existing logger instead of creating new agent
+            thinking_logger.ui_callback = log_callback
             
-            # Re-init agent with new logger
-            agent = DesktopAgent(
-                gemini_api_key=gemini_api_key,
-                thinking_logger=thinking_logger,
-                mode=mode
-            )
+            # Re-init agent connection is NOT needed - we already initialized above!
+            # Just start the TUI with existing agent
             
-            # Re-init agent connection for Voice Mode (since we created a new instance)
             try:
-                # simple connection check before starting TUI
-                from src.utils.ui import console
-                try:
-                    with console.status("[bold #D946EF]Connecting to Desktop...[/]", spinner="dots"):
-                        await agent.initialize()
-                except Exception as e:
-                    console.print(f"\n[error]❌ Failed to initialize agent: {e}[/error]")
-                    sys.exit(1)
-                
                 tui.set_listening(True) # Assume listening start
                 
                 async with asyncio.TaskGroup() as tg:
@@ -123,6 +110,8 @@ async def test_agent(command: str, mode: AgentMode = AgentMode.FAST):
                             pass
                         except Exception as e:
                             tui.add_log(f"Error: {e}", "red")
+                            import traceback
+                            traceback.print_exc()
                             tui.stop_event.set()
                         finally:
                             tui.stop_event.set()
@@ -133,6 +122,8 @@ async def test_agent(command: str, mode: AgentMode = AgentMode.FAST):
                 pass
             except Exception as e:
                 print(f"Error: {e}")
+                import traceback
+                traceback.print_exc()
                 
         else:
             if not command:
