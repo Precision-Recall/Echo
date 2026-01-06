@@ -1,5 +1,7 @@
 "use client";
 
+// Minimal global error boundary that doesn't use any React context or hooks
+// This prevents the "useContext is null" error during Next.js 16 prerendering
 export default function GlobalError({
     error,
     reset,
@@ -9,37 +11,36 @@ export default function GlobalError({
 }) {
     return (
         <html lang="en">
-            <body>
-                <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    minHeight: '100vh',
-                    padding: '20px',
-                    fontFamily: 'system-ui, -apple-system, sans-serif',
-                    backgroundColor: '#0a0a0a',
-                    color: '#ffffff'
-                }}>
-                    <h2 style={{ marginBottom: '16px' }}>Something went wrong!</h2>
-                    <p style={{ marginBottom: '24px', color: '#888' }}>
-                        {error.message || 'An unexpected error occurred'}
-                    </p>
-                    <button
-                        onClick={() => reset()}
-                        style={{
-                            padding: '12px 24px',
-                            backgroundColor: '#3b82f6',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '8px',
-                            cursor: 'pointer',
-                            fontSize: '16px'
-                        }}
-                    >
-                        Try again
-                    </button>
-                </div>
+            <body
+                style={{
+                    margin: 0,
+                    padding: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minHeight: "100vh",
+                    fontFamily: "system-ui, -apple-system, sans-serif",
+                    backgroundColor: "#0a0a0a",
+                    color: "#ffffff",
+                }}
+            >
+                <h2>Something went wrong!</h2>
+                <button
+                    onClick={reset}
+                    style={{
+                        marginTop: "1rem",
+                        padding: "0.75rem 1.5rem",
+                        backgroundColor: "#3b82f6",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "0.5rem",
+                        cursor: "pointer",
+                        fontSize: "1rem",
+                    }}
+                >
+                    Try again
+                </button>
             </body>
         </html>
     );
