@@ -1,23 +1,66 @@
 """
 Gemini Live API Client using Google GenAI SDK
 Handles real-time speech-to-speech communication
+Supports both free API key and paid Vertex AI
 """
 
 import asyncio
 import json
 import logging
-from typing import Callable, Any
+from typing import Callable, Any, Optional
 
 from google import genai
 from google.genai import types
+from google.oauth2 import service_account
 
 from classroom_tools import CLASSROOM_TOOLS_DEF, TOOL_FUNCTIONS
 
 class GeminiLiveClient:
     """Client for Gemini Live API using official SDK"""
     
-    def __init__(self, api_key: str):
-        self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
+    def __init__(self, api_key: Optional[str] = None, project_id: Optional[str] = None, 
+                 location: Optional[str] = None, credentials_json: Optional[str] = None):
+        """
+        Initialize Gemini Live Client
+        
+        For free API (Google AI Studio):
+            api_key: Your API key from AI Studio
+        
+        For paid Vertex AI:
+            project_id: GCP project ID
+            location: Region (e.g., 'us-central1')
+            credentials_json: Service account credentials as JSON string
+        """
+        if project_id and credentials_json:
+            # Vertex AI (Paid)
+            print(f"🔐 Initializing Gemini Live with Vertex AI (Project: {project_id}, Location: {location})")
+            credentials_dict = json.loads(credentials_json)
+            
+            # Define required OAuth scopes for Vertex AI and Generative AI
+            scopes = [
+                "https://www.googleapis.com/auth/generative-language",
+                "https://www.googleapis.com/auth/cloud-platform",
+            ]
+            
+            # Load credentials with explicit scopes
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_dict,
+                scopes=scopes
+            )
+            
+            self.client = genai.Client(
+                vertexai=True,
+                project=project_id,
+                location=location,
+                credentials=credentials
+            )
+        elif api_key:
+            # Free API Key (Google AI Studio)
+            print(f"🔑 Initializing Gemini Live with free API key")
+            self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
+        else:
+            raise ValueError("Must provide either api_key OR (project_id + credentials_json)")
+        
         self.model = "gemini-2.5-flash-native-audio-preview-12-2025"
         self.system_prompt = """You are a helpful, friendly AI assistant having a natural voice conversation. 
 Respond naturally and conversationally, as if talking to a friend. Keep responses concise and engaging. 

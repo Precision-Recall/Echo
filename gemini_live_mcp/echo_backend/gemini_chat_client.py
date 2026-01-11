@@ -1,8 +1,10 @@
 import asyncio
 import json
 import logging
+from typing import Optional
 from google import genai
 from google.genai import types
+from google.oauth2 import service_account
 from classroom_tools import CLASSROOM_TOOLS_DEF, TOOL_FUNCTIONS
 
 
@@ -27,64 +29,95 @@ def get_user_friendly_error(error_message: str) -> str:
 
 
 class GeminiChatClient:
-    def __init__(self, api_key, enable_thinking=True):
-        self.client = genai.Client(api_key=api_key)
+    def __init__(self, api_key: Optional[str] = None,
+                 project_id: Optional[str] = None, location: Optional[str] = None, 
+                 credentials_json: Optional[str] = None):
+        """
+        Initialize Gemini Chat Client
+        
+        For free API (Google AI Studio):
+            api_key: Your API key from AI Studio
+        
+        For paid Vertex AI:
+            project_id: GCP project ID
+            location: Region (e.g., 'us-central1')
+            credentials_json: Service account credentials as JSON string
+        """
+        if project_id and credentials_json:
+            # Vertex AI (Paid)
+            print(f"🔐 Initializing Gemini Chat with Vertex AI (Project: {project_id}, Location: {location})")
+            credentials_dict = json.loads(credentials_json)
+            
+            # Define required OAuth scopes for Vertex AI and Generative AI
+            scopes = [
+                "https://www.googleapis.com/auth/generative-language",
+                "https://www.googleapis.com/auth/cloud-platform",
+            ]
+            
+            # Load credentials with explicit scopes
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_dict,
+                scopes=scopes
+            )
+            
+            self.client = genai.Client(
+                vertexai=True,
+                project=project_id,
+                location=location,
+                credentials=credentials
+            )
+        elif api_key:
+            # Free API Key (Google AI Studio)
+            print(f"🔑 Initializing Gemini Chat with free API key")
+            self.client = genai.Client(api_key=api_key)
+        else:
+            raise ValueError("Must provide either api_key OR (project_id + credentials_json)")
+        
         # Use gemini-2.5-flash-lite for higher rate limits
         self.model = "gemini-2.5-flash-lite" 
-        self.enable_thinking = enable_thinking
         
         # User credentials for Firestore token retrieval
         self.user_email = None
         self.firebase_token = None
         
-        # Use .aio for async client
+        # System prompt
         system_prompt = (
-            "You are Echo, a helpful AI assistant. You have access to Google Classroom tools. "
-            "**IMPORTANT**: Always format your responses using proper Markdown syntax:\n"
-            "- Use bullet points with '-' or '*' for lists\n"
-            "- Use **bold** for emphasis\n"
-            "- Use headings with # for sections\n"
-            "- Use code blocks with ``` for code\n"
-            "When solving complex problems, think through them step by step before providing your answer. "
-            "\n\n**CRITICAL Assignment Creation Workflow**: "
-            "When a user wants to create an assignment, coursework, homework, or task, follow these EXACT steps:"
-            "\n1. Call list_courses()"
-            "\n2. Extract the 'courses' array from the response"
-            "\n3. Call show_assignment_form(courses_data=<the courses array>)"
-            "\n\n**CRITICAL Course Creation Workflow**: "
-            "When a user wants to create a NEW COURSE or NEW CLASS:"
-            "\n1. Call show_course_form() - This will show them a form to fill in"
-            "\n2. Do NOT ask for details conversationally"
-            "\n3. Only use create_course when you receive completed form data"
-            "\n\n**CRITICAL**: "
-            "\n- For assignments: Need to call list_courses first to show dropdown"
-            "\n- For courses: Just call show_course_form directly (no prerequisite)"
-            "\n- Pass ARRAY of course objects for assignments, NOT the entire response object"
-            "\n\nDo NOT: Ask for details conversationally, use create_* tools directly without forms."
-            "\n\nBe concise and helpful."
-        ) if enable_thinking else (
-            "You are Echo, a helpful AI assistant. You have access to Google Classroom tools. "
-            "**IMPORTANT**: Always format your responses using proper Markdown syntax:\n"
-            "- Use bullet points with '-' or '*' for lists\n"
-            "- Use **bold** for emphasis\n"
-            "- Use headings with # for sections\n"
-            "- Use code blocks with ``` for code\n"
-            "\n\n**CRITICAL Assignment Creation Workflow**: "
-            "When a user wants to create an assignment, coursework, homework, or task, follow these EXACT steps:"
-            "\n1. Call list_courses()"
-            "\n2. Extract the 'courses' array from the response"
-            "\n3. Call show_assignment_form(courses_data=<the courses array>)"
-            "\n\n**CRITICAL Course Creation Workflow**: "
-            "When a user wants to create a NEW COURSE or NEW CLASS:"
-            "\n1. Call show_course_form() - This will show them a form to fill in"
-            "\n2. Do NOT ask for details conversationally"
-            "\n3. Only use create_course when you receive completed form data"
-            "\n\n**CRITICAL**: "
-            "\n- For assignments: Need to call list_courses first to show dropdown"
-            "\n- For courses: Just call show_course_form directly (no prerequisite)"
-            "\n- Pass ARRAY of course objects for assignments, NOT the entire response object"
-            "\n\nDo NOT: Ask for details conversationally, use create_* tools directly without forms."
-            "\n\nBe concise and helpful."
+            "You are Echo, an AI assistant for Google Workspace education tools.\n\n"
+            
+            "# Core Behavior\n"
+            "1. LIST/VIEW requests: Call tool → Present results in a clear list → STOP\n"
+            "2. CREATE requests: Call the appropriate form tool immediately\n"
+            "3. FORM tools: Call directly without generating explanatory text first\n"
+            "4. Multi-step workflows: Call all tools in sequence without text between them\n\n"
+            
+            "# Tools (call by exact name, no prefixes)\n"
+            "Classroom: list_courses, show_coursework_form, show_announcements_form, show_assignment_form, show_course_form, create_course\n"
+            "Docs: create_google_doc | Sheets: create_google_sheet | Forms: create_google_form\n\n"
+            
+            "# Examples\n"
+            "User: 'list courses' → Call list_courses() → Display: '1. Course A\\n2. Course B' → STOP\n"
+            "User: 'create assignment' → Call show_assignment_form() → STOP (no text needed)\n"
+            "User: 'show assignments' → Call show_coursework_form() → STOP (no text needed)\n"
+            "User: 'view announcements' → Call show_announcements_form() → STOP (no text needed)\n"
+            "User: 'create course' → Call show_course_form() → STOP (no text needed)\n"
+            "User: 'List all coursework for course ID: 123' → Call list_coursework(course_id='123') → Display results → STOP\n"
+            "User: 'List all announcements for course ID: 123' → Call list_announcements(course_id='123') → Display results → STOP\n\n"
+            
+            "# File Attachments\n"
+            "When creating assignments, if the user message contains 'File IDs: xxx,yyy,zzz':\n"
+            "1. Extract the comma-separated file IDs from the message\n"
+            "2. Pass them as the 'file_ids' parameter to create_coursework()\n"
+            "Example: If message has 'File IDs: 1ABC,2DEF', call create_coursework(file_ids='1ABC,2DEF')\n\n"
+            
+            "# Response Format\n"
+            "Use markdown: **bold**, - bullets, # headings, ``` code\n\n"
+            
+            "# Examples\n"
+            "✓ 'list courses' → Call list_courses(), show results, STOP\n"
+            "✓ 'create assignment' → Call show_assignment_form(), form appears with courses\n"
+            "✓ 'create course' → Call show_course_form(), form appears with student lists\n"
+            "✓ 'create study guide on Python' → create_google_doc() with content\n"
+            "✓ 'show them' (after listing) → Display already retrieved data"
         )
         
         config_params = {
@@ -122,8 +155,8 @@ class GeminiChatClient:
             
             while True:
                 # We use send_message_stream. The SDK manages history.
-                # Note: For gemini-1.5-flash, send_message_stream returns an async generator directly
-                response_stream = self.chat.send_message_stream(current_input)
+                # Note: send_message_stream returns a coroutine that needs to be awaited
+                response_stream = await self.chat.send_message_stream(current_input)
                 
                 tool_calls = []
                 
@@ -172,8 +205,6 @@ class GeminiChatClient:
                     if handler:
                         try:
                             print(f"  📥 Tool args: {list(args_dict.keys())}")
-                            if fc.name == "show_assignment_form":
-                                print(f"  📋 courses_data length: {len(args_dict.get('courses_data', []))}")
                             
                             # Add user credentials to tool arguments if available
                             # This allows tools to retrieve tokens from Firestore

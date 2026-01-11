@@ -1,20 +1,28 @@
 """
 FastAPI WebSocket Relay Server
 Relays real-time audio/text between frontend and Gemini Live API
+Supports both free API key and paid Vertex AI
 """
 
 import asyncio
 import json
 import os
-from typing import Optional
+from typing import Optional, List
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Header, HTTPException, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 from gemini_client import GeminiLiveClient
-from gemini_chat_client import GeminiChatClient, get_user_friendly_error
+from langchain_chat_client import LangChainChatClient, get_user_friendly_error
 from memory_manager import memory_manager
+from classroom_tools import upload_file_to_drive
+import config
+import base64
+from forms_endpoints import router as forms_router
+from slides_endpoints import router as slides_router
 
 # Load environment variables
 load_dotenv()
@@ -35,15 +43,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include forms router
+app.include_router(forms_router)
+app.include_router(slides_router)
+
 
 @app.on_event("startup")
 async def startup_event():
     """Validate configuration on startup"""
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("⚠️  WARNING: GEMINI_API_KEY not set in environment!")
+    is_valid, message = config.validate_configuration()
+    if not is_valid:
+        print(f"⚠️  WARNING: {message}")
     else:
-        print("✅ GEMINI_API_KEY configured")
+        print(f"✅ {message}")
     
     print(f"✅ CORS origins: {ALLOWED_ORIGINS}")
 
@@ -51,11 +63,15 @@ async def startup_event():
 @app.get("/")
 async def root():
     """Health check endpoint"""
-    api_key = os.getenv("GEMINI_API_KEY")
+    is_valid, message = config.validate_configuration()
+    api_type = config.get_api_type()
+    
     return {
         "status": "running",
         "service": "Echo Backend - Gemini Live API Relay",
-        "api_key_configured": bool(api_key),
+        "api_type": api_type,
+        "api_configured": is_valid,
+        "config_message": message,
         "allowed_origins": ALLOWED_ORIGINS
     }
 
@@ -90,6 +106,184 @@ async def get_conversation_history(thread_id: str, last_n: Optional[int] = None)
     }
 
 
+# --- FILE UPLOAD ENDPOINT ---
+@app.post("/api/upload-files")
+async def upload_files_endpoint(
+    request: Request,
+    authorization: str = Header(None),
+    x_user_email: str = Header(None, alias="X-User-Email")
+):
+    """
+    Upload files to Google Drive and return Drive file IDs.
+    Files are uploaded to the user's Drive and permissions are set.
+    
+    Accepts multipart/form-data with files.
+    
+    Returns:
+        JSON with array of uploaded file objects containing id, title, mimeType
+    """
+    if not authorization or not x_user_email:
+        raise HTTPException(status_code=401, detail="Missing authorization or user email")
+    
+    # Extract Firebase token
+    firebase_token = authorization.replace("Bearer ", "")
+    
+    uploaded_files = []
+    
+    try:
+        # Parse multipart form data
+        form = await request.form()
+        
+        # Extract all files from the form
+        files_to_upload = []
+        for key, value in form.items():
+            if hasattr(value, 'filename'):  # It's a file
+                files_to_upload.append(value)
+        
+        if not files_to_upload:
+            raise HTTPException(status_code=400, detail="No files provided")
+        
+        print(f"📁 Received {len(files_to_upload)} file(s) for upload")
+        
+        for upload_file in files_to_upload:
+            # Read file content
+            content = await upload_file.read()
+            base64_content = base64.b64encode(content).decode('utf-8')
+            
+            # Prepare file data
+            file_data = {
+                'name': upload_file.filename,
+                'content': base64_content,
+                'mimeType': upload_file.content_type or 'application/octet-stream'
+            }
+            
+            # Upload to Drive
+            print(f"📁 Uploading {upload_file.filename} to Drive...")
+            drive_file = await upload_file_to_drive(file_data, x_user_email, firebase_token)
+            uploaded_files.append(drive_file)
+            print(f"✅ Uploaded: {drive_file['title']} (ID: {drive_file['id']})")
+        
+        return JSONResponse({
+            "success": True,
+            "files": uploaded_files,
+            "count": len(uploaded_files)
+        })
+        
+    except Exception as e:
+        print(f"❌ Error uploading files: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- DESCRIPTION GENERATOR ENDPOINT ---
+class DescriptionRequest(BaseModel):
+    query: str
+
+@app.post("/api/generate-description")
+async def generate_description(request: DescriptionRequest):
+    """
+    Generate or enhance assignment descriptions using Gemini.
+    Takes user input and returns a concise 50-100 word description.
+    """
+    if not request.query or not request.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    
+    try:
+        print(f"✨ Generating description for: {request.query[:50]}...")
+        
+        # Get client configuration
+        client_config = config.get_client_config()
+        
+        # Initialize Gemini client based on API type
+        if client_config["api_type"] == "free":
+            from google import genai
+            client = genai.Client(api_key=client_config["api_key"])
+        else:  # paid
+            from google import genai
+            from google.oauth2 import service_account
+            import json
+            
+            # Parse credentials JSON string to dict
+            credentials_dict = json.loads(client_config["credentials_json"])
+            
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_dict,
+                scopes=[
+                    "https://www.googleapis.com/auth/generative-language",
+                    "https://www.googleapis.com/auth/cloud-platform",
+                ]
+            )
+            client = genai.Client(
+                vertexai=True,
+                project=client_config["project_id"],
+                location=client_config["location"],
+                credentials=credentials
+            )
+        
+        # Create prompt for description generation
+        prompt = f"""You are an expert educator creating assignment descriptions for Google Classroom.
+
+User input: "{request.query}"
+
+Task: Generate a clear, concise assignment description or question based on the user's input.
+
+Requirements:
+- STRICTLY 50-100 words
+- Professional and educational tone
+- Clear and actionable
+- Preserve the core meaning and intent
+- If input is vague, create a well-structured question/description
+- Do not add any preamble or explanation, just the description
+- IMPORTANT: Return PLAIN TEXT ONLY - no markdown formatting, no asterisks, no special characters
+- Do not use bold (**text**), italic (*text*), or any markdown syntax
+- Use proper paragraph breaks (blank lines) between sections
+- If using bullet points, start each line with "- " or "• "
+- Keep natural line breaks for readability
+
+Generate the description now:"""
+
+        # Generate description using Gemini
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt
+        )
+        
+        generated_text = response.text.strip()
+        
+        # Remove any markdown formatting that might slip through, but preserve newlines
+        import re
+        # Remove bold (**text** or __text__)
+        generated_text = re.sub(r'\*\*(.+?)\*\*', r'\1', generated_text)
+        generated_text = re.sub(r'__(.+?)__', r'\1', generated_text)
+        # Remove italic (*text* or _text_) - but not bullet points (- at start of line)
+        generated_text = re.sub(r'(?<!\n)\*(.+?)\*', r'\1', generated_text)  # italic, not at line start
+        generated_text = re.sub(r'(?<!\n)_(.+?)_', r'\1', generated_text)    # italic, not at line start
+        # Remove code blocks (```text```)
+        generated_text = re.sub(r'```.*?```', '', generated_text, flags=re.DOTALL)
+        generated_text = re.sub(r'`(.+?)`', r'\1', generated_text)
+        # Remove headers (# text) but keep the text
+        generated_text = re.sub(r'^#+\s+', '', generated_text, flags=re.MULTILINE)
+        # Clean up excessive blank lines (more than 2 consecutive newlines)
+        generated_text = re.sub(r'\n{3,}', '\n\n', generated_text)
+        # Clean up spaces at start/end of lines
+        generated_text = '\n'.join(line.strip() for line in generated_text.split('\n'))
+        
+        word_count = len(generated_text.split())
+        
+        print(f"✅ Generated description ({word_count} words)")
+        
+        return JSONResponse({
+            "success": True,
+            "description": generated_text,
+            "word_count": word_count
+        })
+        
+    except Exception as e:
+        print(f"❌ Error generating description: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate description: {str(e)}")
+
+
 # --- LIVE AUDIO ENDPOINT ---
 @app.websocket("/ws/live")
 async def websocket_live(websocket: WebSocket):
@@ -99,13 +293,22 @@ async def websocket_live(websocket: WebSocket):
     await websocket.accept()
     print("✅ Frontend connected to /ws/live")
     
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        await websocket.close(code=1008, reason="API Key missing")
+    # Validate configuration
+    is_valid, message = config.validate_configuration()
+    if not is_valid:
+        await websocket.close(code=1008, reason=message)
         return
     
-    # Initialize Live Client
-    gemini_live = GeminiLiveClient(api_key)
+    # Initialize Live Client based on API type
+    client_config = config.get_client_config()
+    if client_config["api_type"] == "free":
+        gemini_live = GeminiLiveClient(api_key=client_config["api_key"])
+    else:  # paid
+        gemini_live = GeminiLiveClient(
+            project_id=client_config["project_id"],
+            location=client_config["location"],
+            credentials_json=client_config["credentials_json"]
+        )
     
     try:
         await gemini_live.start_session()
@@ -170,23 +373,32 @@ async def websocket_chat(websocket: WebSocket):
     await websocket.accept()
     print("✅ Frontend connected to /ws/chat")
     
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
+    # Validate configuration
+    is_valid, message = config.validate_configuration()
+    if not is_valid:
         try:
             await websocket.send_json({
                 "type": "error",
-                "data": "Server configuration error: API Key missing"
+                "data": f"Server configuration error: {message}"
             })
         except:
             pass
-        await websocket.close(code=1008, reason="API Key missing")
+        await websocket.close(code=1008, reason=message)
         return
     
-    # Initialize Chat Client (One per connection)
+    # Initialize LangChain Chat Client (One per connection)
     gemini_chat = None
     try:
-        gemini_chat = GeminiChatClient(api_key)
-        print("✅ Chat client initialized")
+        client_config = config.get_client_config()
+        if client_config["api_type"] == "free":
+            gemini_chat = LangChainChatClient(api_key=client_config["api_key"])
+        else:  # paid
+            gemini_chat = LangChainChatClient(
+                project_id=client_config["project_id"],
+                location=client_config["location"],
+                credentials_json=client_config["credentials_json"]
+            )
+        print("✅ LangChain Chat client initialized")
     except Exception as e:
         print(f"❌ Failed to initialize chat client: {e}")
         try:
@@ -327,7 +539,7 @@ async def relay_live_to_frontend(gemini_live: GeminiLiveClient, frontend_ws: Web
         # Don't re-raise - let the task end gracefully
         return
 
-async def process_chat_message(chat_client: GeminiChatClient, ws: WebSocket, text: str, thread_id: str = "default"):
+async def process_chat_message(chat_client: LangChainChatClient, ws: WebSocket, text: str, thread_id: str = "default"):
     """Process a chat message and stream response back to frontend"""
     response_text = ""
     
@@ -342,18 +554,44 @@ async def process_chat_message(chat_client: GeminiChatClient, ws: WebSocket, tex
                     
                     if form_type == "assignment":
                         # Send assignment form message
+                        courses = result.get("courses", [])
+                        print(f"📤 Sending assignment form to frontend with {len(courses)} courses")
+                        if len(courses) > 0:
+                            print(f"   First course: {courses[0].get('name', 'Unknown')}")
                         await ws.send_json({
                             "type": "show_assignment_form",
                             "data": {
                                 "course_id": result.get("course_id", ""),
-                                "courses": result.get("courses", [])
+                                "courses": courses
                             }
                         })
                     elif form_type == "course":
-                        # Send course form message
+                        # Send course form message with student lists
                         await ws.send_json({
                             "type": "show_course_form",
-                            "data": {}
+                            "data": {
+                                "student_lists": result.get("student_lists", [])
+                            }
+                        })
+                    elif form_type == "coursework":
+                        # Send coursework selection form
+                        courses = result.get("courses", [])
+                        print(f"📤 Sending coursework form to frontend with {len(courses)} courses")
+                        await ws.send_json({
+                            "type": "show_coursework_form",
+                            "data": {
+                                "courses": courses
+                            }
+                        })
+                    elif form_type == "announcements":
+                        # Send announcements selection form
+                        courses = result.get("courses", [])
+                        print(f"📤 Sending announcements form to frontend with {len(courses)} courses")
+                        await ws.send_json({
+                            "type": "show_announcements_form",
+                            "data": {
+                                "courses": courses
+                            }
                         })
                     
                     # DON'T send the regular tool_end message to prevent duplicate form

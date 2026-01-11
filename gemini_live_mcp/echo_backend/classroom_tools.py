@@ -1,34 +1,35 @@
 """
-Google Classroom API Tools with Dual Authentication Support
+Google Classroom API Tools with Firestore Authentication
 
 This module provides async functions for interacting with the Google Classroom API.
-It supports two authentication methods:
+Uses Firestore for secure, per-user OAuth token storage.
 
-1. **Firestore Token Storage (Recommended)**:
+Authentication:
    - Pass `user_email` and `firebase_token` to any tool function
    - Tokens are securely retrieved from Firestore via the token service
    - Each user has their own OAuth tokens
    - Supports multi-user applications
 
-2. **Legacy tokens.json File**:
-   - Falls back to local tokens.json if Firestore credentials not provided
-   - Useful for development and testing
-   - Single-user authentication
-
 Configuration:
 - Set TOKEN_SERVICE_URL environment variable (default: http://localhost:8001)
 - Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables
-- For Firestore: User must authorize via OAuth and store tokens
-- For legacy: Place tokens.json and credentials.json in CLASSROOM_DATA_DIR
+- User must authorize via OAuth and store tokens in Firestore
 """
 
 import os
 import json
 import logging
 import httpx
-from typing import Optional
+import asyncio
+import smtplib
+import io
+import base64
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from typing import Optional, List, Dict, Any
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 from google.auth.transport.requests import Request
 from google.genai import types
 
@@ -40,55 +41,116 @@ CREDENTIALS_PATH = os.path.join(BASE_DIR, "credentials.json")
 # Token service configuration
 TOKEN_SERVICE_URL = os.getenv("TOKEN_SERVICE_URL", "http://localhost:8001")
 
-async def get_tokens_from_firestore(user_email: str, firebase_id_token: str) -> dict:
+async def get_tokens_from_firestore(user_email: str, firebase_id_token: str, max_retries: int = 3) -> dict:
     """
-    Retrieve user's OAuth tokens from Firestore via token service.
+    Retrieve user's OAuth tokens from Firestore via token service with retry mechanism.
     
     Args:
         user_email: User's email address
         firebase_id_token: Firebase ID token for authentication
+        max_retries: Maximum number of retry attempts (default: 3)
     
     Returns:
         Dictionary with access_token, refresh_token, and optional fields
     
     Raises:
-        Exception: If token retrieval fails
+        Exception: If token retrieval fails after all retries
+    """
+    last_error = None
+    
+    for attempt in range(max_retries):
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.get(
+                    f"{TOKEN_SERVICE_URL}/api/tokens/retrieve",
+                    params={"email": user_email},
+                    headers={"Authorization": f"Bearer {firebase_id_token}"},
+                    timeout=15.0  # Increased timeout
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if attempt > 0:
+                        print(f"✅ Retrieved tokens from Firestore for {user_email} (attempt {attempt + 1})")
+                    else:
+                        print(f"✅ Retrieved tokens from Firestore for {user_email}")
+                    return {
+                        "access_token": data["access_token"],
+                        "refresh_token": data["refresh_token"],
+                        "expires_in": data.get("expires_in", 3600),
+                        "scope": data.get("scope", "")
+                    }
+                elif response.status_code == 404:
+                    raise Exception("No Google Classroom tokens found. Please authorize access first.")
+                elif response.status_code == 401:
+                    raise Exception("Authentication failed. Please log in again.")
+                else:
+                    error_data = response.json()
+                    raise Exception(error_data.get("detail", "Failed to retrieve tokens"))
+            
+            except httpx.TimeoutException as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    print(f"⚠️  Token service timeout (attempt {attempt + 1}/{max_retries}), retrying...")
+                    await asyncio.sleep(2)  # Wait 2 seconds before retry
+                    continue
+                raise Exception("Token service timeout after multiple attempts. Please try again.")
+            except httpx.ConnectError as e:
+                last_error = e
+                raise Exception(f"Cannot connect to token service at {TOKEN_SERVICE_URL}")
+            except Exception as e:
+                if "No Google Classroom tokens found" in str(e) or "Authentication failed" in str(e):
+                    raise
+                last_error = e
+                if attempt < max_retries - 1:
+                    print(f"⚠️  Error retrieving tokens (attempt {attempt + 1}/{max_retries}), retrying...")
+                    await asyncio.sleep(2)  # Wait 2 seconds before retry
+                    continue
+                print(f"❌ Error retrieving tokens from Firestore: {e}")
+                raise Exception(f"Failed to retrieve tokens: {str(e)}")
+
+async def update_tokens_in_firestore(user_email: str, firebase_id_token: str, access_token: str, refresh_token: str, expires_in: int = 3600, scope: str = "") -> bool:
+    """
+    Update user's OAuth tokens in Firestore via token service.
+    This is called after refreshing tokens to persist the new access token.
+    
+    Args:
+        user_email: User's email address
+        firebase_id_token: Firebase ID token for authentication
+        access_token: New access token
+        refresh_token: Refresh token
+        expires_in: Token expiration time in seconds
+        scope: OAuth scopes
+    
+    Returns:
+        True if update successful, False otherwise
     """
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(
-                f"{TOKEN_SERVICE_URL}/api/tokens/retrieve",
-                params={"email": user_email},
+            response = await client.post(
+                f"{TOKEN_SERVICE_URL}/api/tokens/store",
+                json={
+                    "email": user_email,
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "expires_in": expires_in,
+                    "scope": scope
+                },
                 headers={"Authorization": f"Bearer {firebase_id_token}"},
                 timeout=10.0
             )
             
             if response.status_code == 200:
-                data = response.json()
-                print(f"✅ Retrieved tokens from Firestore for {user_email}")
-                return {
-                    "access_token": data["access_token"],
-                    "refresh_token": data["refresh_token"],
-                    "expires_in": data.get("expires_in", 3600),
-                    "scope": data.get("scope", "")
-                }
-            elif response.status_code == 404:
-                raise Exception("No Google Classroom tokens found. Please authorize access first.")
-            elif response.status_code == 401:
-                raise Exception("Authentication failed. Please log in again.")
+                print(f"✅ Updated refreshed tokens in Firestore for {user_email}")
+                return True
             else:
                 error_data = response.json()
-                raise Exception(error_data.get("detail", "Failed to retrieve tokens"))
+                print(f"⚠️  Failed to update tokens in Firestore: {error_data.get('detail', 'Unknown error')}")
+                return False
         
-        except httpx.TimeoutException:
-            raise Exception("Token service timeout. Please try again.")
-        except httpx.ConnectError:
-            raise Exception(f"Cannot connect to token service at {TOKEN_SERVICE_URL}")
         except Exception as e:
-            if "No Google Classroom tokens found" in str(e) or "Authentication failed" in str(e):
-                raise
-            print(f"❌ Error retrieving tokens from Firestore: {e}")
-            raise Exception(f"Failed to retrieve tokens: {str(e)}")
+            print(f"⚠️  Error updating tokens in Firestore: {e}")
+            return False
 
 async def get_classroom_service(user_email: Optional[str] = None, firebase_id_token: Optional[str] = None):
     """
@@ -101,34 +163,19 @@ async def get_classroom_service(user_email: Optional[str] = None, firebase_id_to
     Returns:
         Google Classroom service object
     
-    Note:
-        If user_email and firebase_id_token are provided, retrieves tokens from Firestore.
-        Otherwise, falls back to legacy tokens.json file.
+    Raises:
+        Exception: If user_email and firebase_id_token are not provided
     """
-    tokens = None
+    # Require Firestore authentication
+    if not user_email or not firebase_id_token:
+        raise Exception(
+            "Authentication required. Please provide user_email and firebase_id_token.\n"
+            "User must authorize Google Classroom access through the app."
+        )
     
-    # Try to get tokens from Firestore if user credentials provided
-    if user_email and firebase_id_token:
-        try:
-            tokens = await get_tokens_from_firestore(user_email, firebase_id_token)
-            print(f"📚 Using Firestore tokens for {user_email}")
-        except Exception as e:
-            print(f"⚠️  Failed to get Firestore tokens: {e}")
-            print(f"   Falling back to tokens.json if available")
-            tokens = None
-    
-    # Fall back to tokens.json if Firestore tokens not available
-    if tokens is None:
-        if not os.path.exists(TOKENS_PATH):
-            raise FileNotFoundError(
-                        f"No authentication available. Either:\n"
-                        f"1. Provide user_email and firebase_id_token to use Firestore tokens, or\n"
-                        f"2. Place tokens.json at {TOKENS_PATH}"
-            )
-
-        with open(TOKENS_PATH, "r") as f:
-            tokens = json.load(f)
-        print(f"📚 Using legacy tokens.json")
+    # Get tokens from Firestore with retry mechanism
+    tokens = await get_tokens_from_firestore(user_email, firebase_id_token)
+    print(f"📚 Using Firestore tokens for {user_email}")
 
     # Get Client ID/Secret
     client_id = os.environ.get("GOOGLE_CLIENT_ID")
@@ -163,6 +210,17 @@ async def get_classroom_service(user_email: Optional[str] = None, firebase_id_to
         try:
             creds.refresh(Request())
             print(f"🔄 Refreshed access token")
+            
+            # Save refreshed token back to Firestore if using Firestore auth
+            if user_email and firebase_id_token:
+                await update_tokens_in_firestore(
+                    user_email=user_email,
+                    firebase_id_token=firebase_id_token,
+                    access_token=creds.token,
+                    refresh_token=creds.refresh_token,
+                    expires_in=3600,  # Default expiration
+                    scope=" ".join(creds.scopes) if creds.scopes else ""
+                )
         except Exception as e:
             logging.error(f"Failed to refresh token: {e}")
             raise Exception("Failed to refresh access token. Please re-authorize Google Classroom.")
@@ -172,55 +230,65 @@ async def get_classroom_service(user_email: Optional[str] = None, firebase_id_to
 async def get_docs_service(user_email: Optional[str] = None, firebase_id_token: Optional[str] = None):
     """
     Authenticate and return the Google Docs service.
-    Uses the same authentication flow as Classroom.
+    Requires Firestore authentication.
     """
-    creds = None
-    if user_email and firebase_id_token:
-        try:
-            tokens = await get_tokens_from_firestore(user_email, firebase_id_token)
-            client_id = os.environ.get("GOOGLE_CLIENT_ID")
-            client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
-            
-            if not client_id or not client_secret:
-                if os.path.exists(CREDENTIALS_PATH):
-                    with open(CREDENTIALS_PATH, "r") as f:
-                        creds_data = json.load(f)
-                        web_or_installed = creds_data.get("web") or creds_data.get("installed")
-                        if web_or_installed:
-                            client_id = web_or_installed.get("client_id")
-                            client_secret = web_or_installed.get("client_secret")
-            
-            creds = Credentials(
-                token=tokens.get("access_token"),
-                refresh_token=tokens.get("refresh_token"),
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=client_id,
-                client_secret=client_secret,
-                scopes=tokens.get("scope", "").split(" ") if isinstance(tokens.get("scope"), str) else []
-            )
-            print(f"📄 Using Firestore tokens for Google Docs for {user_email}")
-        except Exception as e:
-            logging.error(f"Failed to retrieve Firestore tokens for {user_email}: {e}")
-            creds = _load_local_creds_for_docs()
-    else:
-        creds = _load_local_creds_for_docs()
+    if not user_email or not firebase_id_token:
+        raise Exception("Authentication required. Please provide user_email and firebase_id_token.")
     
-    if not creds:
-        raise ValueError("No valid credentials found for Google Docs service.")
+    # Get tokens from Firestore with retry
+    tokens = await get_tokens_from_firestore(user_email, firebase_id_token)
+    
+    # Get OAuth credentials
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        if os.path.exists(CREDENTIALS_PATH):
+            with open(CREDENTIALS_PATH, "r") as f:
+                creds_data = json.load(f)
+                web_or_installed = creds_data.get("web") or creds_data.get("installed")
+                if web_or_installed:
+                    client_id = web_or_installed.get("client_id")
+                    client_secret = web_or_installed.get("client_secret")
+    
+    if not client_id or not client_secret:
+        raise ValueError("Google OAuth credentials not configured.")
+    
+    creds = Credentials(
+        token=tokens.get("access_token"),
+        refresh_token=tokens.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=tokens.get("scope", "").split(" ") if isinstance(tokens.get("scope"), str) else []
+    )
+    print(f"📄 Using Firestore tokens for Google Docs for {user_email}")
     
     # Refresh if expired
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
+            print(f"🔄 Refreshed access token for Docs")
+            
+            # Save refreshed token back to Firestore if using Firestore auth
+            if user_email and firebase_id_token:
+                await update_tokens_in_firestore(
+                    user_email=user_email,
+                    firebase_id_token=firebase_id_token,
+                    access_token=creds.token,
+                    refresh_token=creds.refresh_token,
+                    expires_in=3600,
+                    scope=" ".join(creds.scopes) if creds.scopes else ""
+                )
         except Exception as e:
             logging.error(f"Failed to refresh token: {e}")
             raise
     
     return build("docs", "v1", credentials=creds)
 
-async def get_sheets_service(user_email: Optional[str] = None, firebase_id_token: Optional[str] = None):
+async def get_drive_service(user_email: Optional[str] = None, firebase_id_token: Optional[str] = None):
     """
-    Authenticate and return the Google Sheets service.
+    Authenticate and return the Google Drive service.
     Uses the same authentication flow as Classroom.
     """
     creds = None
@@ -234,33 +302,170 @@ async def get_sheets_service(user_email: Optional[str] = None, firebase_id_token
                 if os.path.exists(CREDENTIALS_PATH):
                     with open(CREDENTIALS_PATH, "r") as f:
                         creds_data = json.load(f)
-                        web_or_installed = creds_data.get("web") or creds_data.get("installed")
-                        if web_or_installed:
-                            client_id = web_or_installed.get("client_id")
-                            client_secret = web_or_installed.get("client_secret")
+                        client_id = creds_data["installed"]["client_id"]
+                        client_secret = creds_data["installed"]["client_secret"]
+                else:
+                    raise Exception("Google OAuth credentials not found")
             
             creds = Credentials(
-                token=tokens.get("access_token"),
-                refresh_token=tokens.get("refresh_token"),
+                token=tokens["access_token"],
+                refresh_token=tokens["refresh_token"],
                 token_uri="https://oauth2.googleapis.com/token",
                 client_id=client_id,
                 client_secret=client_secret,
-                scopes=tokens.get("scope", "").split(" ") if isinstance(tokens.get("scope"), str) else []
+                scopes=tokens.get("scope", "").split()
             )
-            print(f"📊 Using Firestore tokens for Google Sheets for {user_email}")
+            print(f"📚 Using Firestore tokens for {user_email}")
         except Exception as e:
-            logging.error(f"Failed to retrieve Firestore tokens for {user_email}: {e}")
-            creds = _load_local_creds_for_sheets()
+            logging.error(f"Error getting tokens from Firestore: {e}")
+            raise
     else:
-        creds = _load_local_creds_for_sheets()
+        if os.path.exists(TOKENS_PATH):
+            creds = Credentials.from_authorized_user_file(TOKENS_PATH)
+        else:
+            raise Exception("No authentication credentials available")
     
-    if not creds:
-        raise ValueError("No valid credentials found for Google Sheets service.")
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            if user_email and firebase_id_token:
+                await update_tokens_in_firestore(
+                    user_email, firebase_id_token,
+                    creds.token, creds.refresh_token,
+                    3600, " ".join(creds.scopes)
+                )
+        except Exception as e:
+            logging.error(f"Failed to refresh token: {e}")
+            raise
+    
+    return build("drive", "v3", credentials=creds)
+
+async def upload_file_to_drive(file_data: Dict[str, Any], user_email: Optional[str] = None, firebase_token: Optional[str] = None) -> Dict[str, str]:
+    """
+    Upload a file to Google Drive.
+    
+    Args:
+        file_data: Dictionary containing:
+            - name: File name
+            - content: Base64-encoded file content
+            - mimeType: MIME type of the file
+        user_email: User's email (for authentication)
+        firebase_token: Firebase ID token (for authentication)
+    
+    Returns:
+        Dictionary with Drive file ID and title
+    """
+    try:
+        drive_service = await get_drive_service(user_email, firebase_token)
+        
+        # Decode base64 content
+        file_content = base64.b64decode(file_data['content'])
+        file_stream = io.BytesIO(file_content)
+        
+        # Create file metadata
+        file_metadata = {
+            'name': file_data['name'],
+            'mimeType': file_data.get('mimeType', 'application/octet-stream')
+        }
+        
+        # Create media upload
+        media = MediaIoBaseUpload(
+            file_stream,
+            mimetype=file_data.get('mimeType', 'application/octet-stream'),
+            resumable=True
+        )
+        
+        # Upload file
+        file = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, name, mimeType, webViewLink'
+        ).execute()
+        
+        file_id = file.get('id')
+        file_name = file.get('name')
+        
+        print(f"📁 Uploaded file to Drive: {file_name} (ID: {file_id})")
+        
+        # Set file permissions to allow anyone with the link to view
+        # This is necessary for Google Classroom to access the file
+        try:
+            permission = {
+                'type': 'anyone',
+                'role': 'reader'
+            }
+            drive_service.permissions().create(
+                fileId=file_id,
+                body=permission
+            ).execute()
+            print(f"✅ Set file permissions for: {file_name}")
+        except Exception as perm_error:
+            print(f"⚠️  Warning: Could not set file permissions: {perm_error}")
+        
+        return {
+            'id': file_id,
+            'title': file_name,
+            'mimeType': file.get('mimeType'),
+            'webViewLink': file.get('webViewLink', '')
+        }
+        
+    except Exception as e:
+        print(f"❌ Error uploading file to Drive: {e}")
+        raise Exception(f"Failed to upload file: {str(e)}")
+
+async def get_sheets_service(user_email: Optional[str] = None, firebase_id_token: Optional[str] = None):
+    """
+    Authenticate and return the Google Sheets service.
+    Requires Firestore authentication.
+    """
+    if not user_email or not firebase_id_token:
+        raise Exception("Authentication required. Please provide user_email and firebase_id_token.")
+    
+    # Get tokens from Firestore with retry
+    tokens = await get_tokens_from_firestore(user_email, firebase_id_token)
+    
+    # Get OAuth credentials
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        if os.path.exists(CREDENTIALS_PATH):
+            with open(CREDENTIALS_PATH, "r") as f:
+                creds_data = json.load(f)
+                web_or_installed = creds_data.get("web") or creds_data.get("installed")
+                if web_or_installed:
+                    client_id = web_or_installed.get("client_id")
+                    client_secret = web_or_installed.get("client_secret")
+    
+    if not client_id or not client_secret:
+        raise ValueError("Google OAuth credentials not configured.")
+    
+    creds = Credentials(
+        token=tokens.get("access_token"),
+        refresh_token=tokens.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=tokens.get("scope", "").split(" ") if isinstance(tokens.get("scope"), str) else []
+    )
+    print(f"📊 Using Firestore tokens for Google Sheets for {user_email}")
     
     # Refresh if expired
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
+            print(f"🔄 Refreshed access token for Sheets")
+            
+            # Save refreshed token back to Firestore if using Firestore auth
+            if user_email and firebase_id_token:
+                await update_tokens_in_firestore(
+                    user_email=user_email,
+                    firebase_id_token=firebase_id_token,
+                    access_token=creds.token,
+                    refresh_token=creds.refresh_token,
+                    expires_in=3600,
+                    scope=" ".join(creds.scopes) if creds.scopes else ""
+                )
         except Exception as e:
             logging.error(f"Failed to refresh token: {e}")
             raise
@@ -308,48 +513,58 @@ def _load_local_creds_for_sheets():
 async def get_forms_service(user_email: Optional[str] = None, firebase_id_token: Optional[str] = None):
     """
     Authenticate and return the Google Forms service.
-    Uses the same authentication flow as Classroom.
+    Requires Firestore authentication.
     
     Required permission: https://www.googleapis.com/auth/forms.body
     """
-    creds = None
-    if user_email and firebase_id_token:
-        try:
-            tokens = await get_tokens_from_firestore(user_email, firebase_id_token)
-            client_id = os.environ.get("GOOGLE_CLIENT_ID")
-            client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
-            
-            if not client_id or not client_secret:
-                if os.path.exists(CREDENTIALS_PATH):
-                    with open(CREDENTIALS_PATH, "r") as f:
-                        creds_data = json.load(f)
-                        web_or_installed = creds_data.get("web") or creds_data.get("installed")
-                        if web_or_installed:
-                            client_id = web_or_installed.get("client_id")
-                            client_secret = web_or_installed.get("client_secret")
-            
-            creds = Credentials(
-                token=tokens.get("access_token"),
-                refresh_token=tokens.get("refresh_token"),
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=client_id,
-                client_secret=client_secret,
-                scopes=tokens.get("scope", "").split(" ") if isinstance(tokens.get("scope"), str) else []
-            )
-            print(f"📋 Using Firestore tokens for Google Forms for {user_email}")
-        except Exception as e:
-            logging.error(f"Failed to retrieve Firestore tokens for {user_email}: {e}")
-            creds = _load_local_creds_for_forms()
-    else:
-        creds = _load_local_creds_for_forms()
+    if not user_email or not firebase_id_token:
+        raise Exception("Authentication required. Please provide user_email and firebase_id_token.")
     
-    if not creds:
-        raise ValueError("No valid credentials found for Google Forms service.")
+    # Get tokens from Firestore with retry
+    tokens = await get_tokens_from_firestore(user_email, firebase_id_token)
+    
+    # Get OAuth credentials
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        if os.path.exists(CREDENTIALS_PATH):
+            with open(CREDENTIALS_PATH, "r") as f:
+                creds_data = json.load(f)
+                web_or_installed = creds_data.get("web") or creds_data.get("installed")
+                if web_or_installed:
+                    client_id = web_or_installed.get("client_id")
+                    client_secret = web_or_installed.get("client_secret")
+    
+    if not client_id or not client_secret:
+        raise ValueError("Google OAuth credentials not configured.")
+    
+    creds = Credentials(
+        token=tokens.get("access_token"),
+        refresh_token=tokens.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=tokens.get("scope", "").split(" ") if isinstance(tokens.get("scope"), str) else []
+    )
+    print(f"📋 Using Firestore tokens for Google Forms for {user_email}")
     
     # Refresh if expired
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
+            print(f"🔄 Refreshed access token for Forms")
+            
+            # Save refreshed token back to Firestore if using Firestore auth
+            if user_email and firebase_id_token:
+                await update_tokens_in_firestore(
+                    user_email=user_email,
+                    firebase_id_token=firebase_id_token,
+                    access_token=creds.token,
+                    refresh_token=creds.refresh_token,
+                    expires_in=3600,
+                    scope=" ".join(creds.scopes) if creds.scopes else ""
+                )
         except Exception as e:
             logging.error(f"Failed to refresh token: {e}")
             raise
@@ -360,6 +575,64 @@ def _load_local_creds_for_forms():
     """Helper to load credentials from local tokens.json for Forms"""
     # Same as docs/sheets
     return _load_local_creds_for_docs()
+
+async def get_slides_service(user_email: Optional[str] = None, firebase_id_token: Optional[str] = None):
+    """
+    Authenticate and return the Google Slides service.
+    Requires Firestore authentication.
+    
+    Required permission: https://www.googleapis.com/auth/presentations
+    """
+    if not user_email or not firebase_id_token:
+        raise Exception("Authentication required. Please provide user_email and firebase_id_token.")
+    
+    # Get tokens from Firestore with retry
+    tokens = await get_tokens_from_firestore(user_email, firebase_id_token)
+    
+    # Get OAuth credentials
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        if os.path.exists(CREDENTIALS_PATH):
+            with open(CREDENTIALS_PATH, "r") as f:
+                creds_data = json.load(f)
+                web_or_installed = creds_data.get("web") or creds_data.get("installed")
+                if web_or_installed:
+                    client_id = web_or_installed.get("client_id")
+                    client_secret = web_or_installed.get("client_secret")
+    
+    if not client_id or not client_secret:
+        raise ValueError("Google OAuth credentials not configured.")
+    
+    creds = Credentials(
+        token=tokens.get("access_token"),
+        refresh_token=tokens.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=tokens.get("scope", "").split(" ") if isinstance(tokens.get("scope"), str) else []
+    )
+    print(f"📊 Using Firestore tokens for Google Slides for {user_email}")
+    
+    # Refresh if expired
+    if creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            # Save refreshed token back to Firestore
+            await update_tokens_in_firestore(
+                user_email=user_email,
+                firebase_id_token=firebase_id_token,
+                access_token=creds.token,
+                refresh_token=creds.refresh_token,
+                expires_in=3600,
+                scope=" ".join(creds.scopes) if creds.scopes else ""
+            )
+        except Exception as e:
+            logging.error(f"Failed to refresh token: {e}")
+            raise
+    
+    return build("slides", "v1", credentials=creds)
 
 # --- Tool Helper Functions ---
 
@@ -386,6 +659,30 @@ async def get_course(course_id, user_email=None, firebase_token=None):
         print(f"❌ Error in get_course: {e}")
         return {"error": str(e)}
 
+async def show_coursework_form(user_email=None, firebase_token=None):
+    """
+    Show a form with course dropdown to select which course's coursework to view.
+    Internally fetches all available courses.
+    """
+    try:
+        print("📋 Fetching courses for coursework form...")
+        courses_result = await list_courses(user_email=user_email, firebase_token=firebase_token)
+        
+        if "error" in courses_result:
+            return courses_result
+        
+        courses = courses_result.get("courses", [])
+        print(f"✅ Displaying coursework form with {len(courses)} courses in dropdown")
+        
+        return {
+            "action": "show_form",
+            "form_type": "coursework",
+            "courses": courses
+        }
+    except Exception as e:
+        print(f"❌ Error in show_coursework_form: {e}")
+        return {"error": str(e)}
+
 async def list_coursework(course_id, course_work_states=None, user_email=None, firebase_token=None):
     try:
         service = await get_classroom_service(user_email, firebase_token)
@@ -407,6 +704,30 @@ async def get_coursework(course_id, course_work_id, user_email=None, firebase_to
         print(f"❌ Error in get_coursework: {e}")
         return {"error": str(e)}
 
+async def show_announcements_form(user_email=None, firebase_token=None):
+    """
+    Show a form with course dropdown to select which course's announcements to view.
+    Internally fetches all available courses.
+    """
+    try:
+        print("📢 Fetching courses for announcements form...")
+        courses_result = await list_courses(user_email=user_email, firebase_token=firebase_token)
+        
+        if "error" in courses_result:
+            return courses_result
+        
+        courses = courses_result.get("courses", [])
+        print(f"✅ Displaying announcements form with {len(courses)} courses in dropdown")
+        
+        return {
+            "action": "show_form",
+            "form_type": "announcements",
+            "courses": courses
+        }
+    except Exception as e:
+        print(f"❌ Error in show_announcements_form: {e}")
+        return {"error": str(e)}
+
 async def list_announcements(course_id, announcement_states=None, user_email=None, firebase_token=None):
     try:
         service = await get_classroom_service(user_email, firebase_token)
@@ -417,15 +738,6 @@ async def list_announcements(course_id, announcement_states=None, user_email=Non
         return {"announcements": results.get("announcements", [])}
     except Exception as e:
         print(f"❌ Error in list_announcements: {e}")
-        return {"error": str(e)}
-
-async def list_students(course_id, user_email=None, firebase_token=None):
-    try:
-        service = await get_classroom_service(user_email, firebase_token)
-        results = service.courses().students().list(courseId=course_id).execute()
-        return {"students": results.get("students", [])}
-    except Exception as e:
-        print(f"❌ Error in list_students: {e}")
         return {"error": str(e)}
 
 async def list_submissions(course_id, course_work_id, user_id=None, user_email=None, firebase_token=None):
@@ -440,7 +752,25 @@ async def list_submissions(course_id, course_work_id, user_id=None, user_email=N
         print(f"❌ Error in list_submissions: {e}")
         return {"error": str(e)}
 
-async def create_coursework(course_id, title, description=None, due_date=None, due_time=None, max_points=None, work_type="ASSIGNMENT", user_email=None, firebase_token=None):
+async def create_coursework(course_id, title, description=None, due_date=None, due_time=None, max_points=None, work_type="ASSIGNMENT", file_ids=None, user_email=None, firebase_token=None):
+    """
+    Create a new assignment/coursework in Google Classroom.
+    
+    Args:
+        course_id: The ID of the course
+        title: Assignment title
+        description: Assignment description
+        due_date: Due date in YYYY-MM-DD format
+        due_time: Due time in HH:MM format
+        max_points: Maximum points for the assignment
+        work_type: Type of work (ASSIGNMENT, SHORT_ANSWER_QUESTION, etc.)
+        file_ids: Comma-separated string of Google Drive file IDs (already uploaded)
+        user_email: User's email (for authentication)
+        firebase_token: Firebase ID token (for authentication)
+    
+    Returns:
+        Dictionary with coursework details
+    """
     try:
         service = await get_classroom_service(user_email, firebase_token)
         body = {
@@ -456,39 +786,85 @@ async def create_coursework(course_id, title, description=None, due_date=None, d
         if due_time:
             h, m = map(int, due_time.split(":"))
             body["dueTime"] = {"hours": h, "minutes": m}
+        
+        # Handle file attachments if file IDs are provided
+        if file_ids:
+            # Parse file IDs (comma-separated string)
+            file_id_list = [fid.strip() for fid in file_ids.split(',') if fid.strip()]
+            
+            if file_id_list:
+                print(f"📎 Attaching {len(file_id_list)} file(s) to assignment...")
+                materials = []
+                
+                # Get Drive service to fetch file metadata
+                drive_service = await get_drive_service(user_email, firebase_token)
+                
+                for file_id in file_id_list:
+                    try:
+                        # Get file metadata from Drive
+                        file_metadata = drive_service.files().get(
+                            fileId=file_id,
+                            fields='id, name, mimeType'
+                        ).execute()
+                        
+                        # Add to materials array
+                        materials.append({
+                            "driveFile": {
+                                "driveFile": {
+                                    "id": file_id,
+                                    "title": file_metadata.get('name', 'Untitled')
+                                }
+                            }
+                        })
+                        print(f"✅ Attached file: {file_metadata.get('name')}")
+                    except Exception as file_error:
+                        print(f"⚠️  Failed to attach file {file_id}: {file_error}")
+                        # Continue with other files even if one fails
+                
+                if materials:
+                    body["materials"] = materials
+                    print(f"📎 Added {len(materials)} file(s) as materials to assignment")
 
         result = service.courses().courseWork().create(courseId=course_id, body=body).execute()
+        
         return {"coursework": result}
+        
     except Exception as e:
         print(f"❌ Error in create_coursework: {e}")
+        import traceback
+        traceback.print_exc()
         return {"error": str(e)}
 
-async def show_assignment_form(courses_data=None, course_id=None, user_email=None, firebase_token=None):
+async def show_assignment_form(course_id=None, user_email=None, firebase_token=None):
     """
     Special tool that signals the UI to show the assignment creation form.
-    This is not a real API call - it's a UI control tool.
-    
-    IMPORTANT: You must call list_courses() FIRST to get the courses data,
-    then pass that data to this function.
+    This tool automatically fetches all available courses and displays them in a dropdown.
     
     Args:
-        courses_data: The courses array from list_courses() response
-        course_id: Optional course ID to pre-select
-        user_email: User's email (not used, but accepted for consistency)
-        firebase_token: Firebase ID token (not used, but accepted for consistency)
+        course_id: Optional course ID to pre-select in the dropdown
+        user_email: User's email (for fetching courses from Google Classroom)
+        firebase_token: Firebase ID token (for authentication)
+    
+    Returns:
+        Dictionary with form action and courses data for the UI
     """
-    # Handle case where courses_data might be None or not provided
-    if courses_data is None:
-        print("⚠️  WARNING: show_assignment_form called without courses_data!")
-        courses_data = []
+    print("📋 Fetching courses for assignment form...")
     
-    # Handle if the entire result object was passed instead of just the courses array
-    if isinstance(courses_data, dict) and "courses" in courses_data:
-        courses_data = courses_data["courses"]
+    # Automatically fetch courses using the list_courses function
+    courses_result = await list_courses(user_email=user_email, firebase_token=firebase_token)
     
-    print(f"📋 Displaying assignment form with {len(courses_data)} courses in dropdown")
+    # Extract courses array from result
+    courses_data = []
+    if isinstance(courses_result, dict):
+        if "courses" in courses_result:
+            courses_data = courses_result["courses"]
+        elif "error" in courses_result:
+            print(f"❌ Error fetching courses: {courses_result['error']}")
+            courses_data = []
+    
+    print(f"✅ Displaying assignment form with {len(courses_data)} courses in dropdown")
     if len(courses_data) > 0:
-        print(f"  ✅ First course: {courses_data[0].get('name', 'Unknown')}")
+        print(f"  📚 First course: {courses_data[0].get('name', 'Unknown')}")
     
     return {
         "action": "show_form",
@@ -497,9 +873,134 @@ async def show_assignment_form(courses_data=None, course_id=None, user_email=Non
         "courses": courses_data
     }
 
-async def create_course(name, section=None, description_heading=None, description=None, room=None, owner_id="me", user_email=None, firebase_token=None):
+async def send_course_invitation_email(course_name: str, course_link: str, enrollment_code: str, student_emails: List[str], teacher_name: str = "Your Teacher"):
     """
-    Create a new course in Google Classroom.
+    Send course invitation email to students using Gmail SMTP.
+    
+    Args:
+        course_name: Name of the course
+        course_link: Google Classroom join link
+        enrollment_code: Course enrollment code (for manual entry)
+        student_emails: List of student email addresses
+        teacher_name: Name of the teacher (optional)
+    
+    Returns:
+        Dictionary with success status and message
+    """
+    try:
+        # Get Gmail credentials from environment
+        gmail_user = os.getenv("GMAIL_USER")
+        gmail_password = os.getenv("GMAIL_APP_PASSWORD")
+        
+        if not gmail_user or not gmail_password:
+            return {
+                "success": False,
+                "error": "Gmail credentials not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD in environment variables."
+            }
+        
+        # Create email message
+        msg = MIMEMultipart('alternative')
+        msg['From'] = gmail_user
+        msg['To'] = ", ".join(student_emails)
+        msg['Subject'] = f"Invitation to Join: {course_name}"
+        
+        # Email body (HTML)
+        html_body = f"""
+        <html>
+          <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+              <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+                <h1 style="color: white; margin: 0;">You're Invited!</h1>
+              </div>
+              
+              <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
+                <p style="font-size: 16px;">Hello,</p>
+                
+                <p style="font-size: 16px;">
+                  {teacher_name} has invited you to join the Google Classroom course:
+                </p>
+                
+                <div style="background: white; padding: 20px; border-left: 4px solid #667eea; margin: 20px 0;">
+                  <h2 style="margin: 0; color: #667eea;">{course_name}</h2>
+                </div>
+                
+                <p style="font-size: 16px; margin-bottom: 10px;">
+                  <strong>How to join:</strong>
+                </p>
+                
+                <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border: 2px solid #764ba2;">
+                  <p style="margin: 0 0 10px 0; font-size: 14px; color: #666;">
+                    Use this class code to join:
+                  </p>
+                  <div style="text-align: center; margin: 10px 0;">
+                    <div style="background: #f5f5f5; padding: 15px 25px; border-radius: 5px; display: inline-block;">
+                      <span style="font-family: 'Courier New', monospace; font-size: 24px; font-weight: bold; color: #764ba2; letter-spacing: 2px;">
+                        {enrollment_code}
+                      </span>
+                    </div>
+                  </div>
+                  <p style="margin: 10px 0 0 0; font-size: 12px; color: #999; text-align: center;">
+                    Go to <a href="https://classroom.google.com" style="color: #764ba2;">classroom.google.com</a> and enter this code
+                  </p>
+                </div>
+                
+                <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
+                
+                <p style="font-size: 12px; color: #999; text-align: center;">
+                  This is an automated message from Google Classroom via Echo AI Assistant.
+                </p>
+              </div>
+            </div>
+          </body>
+        </html>
+        """
+        
+        # Plain text version
+        text_body = f"""
+You're Invited to Join a Google Classroom Course!
+
+{teacher_name} has invited you to join: {course_name}
+
+HOW TO JOIN:
+
+Class Code: {enrollment_code}
+Go to classroom.google.com and enter this code
+
+---
+This is an automated message from Google Classroom via Echo AI Assistant.
+        """
+        
+        # Attach both plain text and HTML versions
+        part1 = MIMEText(text_body, 'plain')
+        part2 = MIMEText(html_body, 'html')
+        msg.attach(part1)
+        msg.attach(part2)
+        
+        # Send email via Gmail SMTP
+        print(f"📧 Sending course invitation to {len(student_emails)} students...")
+        
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(gmail_user, gmail_password)
+            server.send_message(msg)
+        
+        print(f"✅ Course invitation sent successfully to {len(student_emails)} students")
+        
+        return {
+            "success": True,
+            "message": f"Invitation sent to {len(student_emails)} students",
+            "recipients": student_emails
+        }
+        
+    except Exception as e:
+        print(f"❌ Error sending course invitation email: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+async def create_course(name, section=None, description_heading=None, description=None, room=None, owner_id="me", student_list_id=None, user_email=None, firebase_token=None):
+    """
+    Create a new course in Google Classroom and optionally send invitations to students.
     
     Required permission: https://www.googleapis.com/auth/classroom.courses
     
@@ -510,15 +1011,20 @@ async def create_course(name, section=None, description_heading=None, descriptio
         description: Full course description
         room: Room location
         owner_id: Teacher ID (defaults to "me" for authenticated user)
+        student_list_id: Optional ID of student list to send invitations to
         user_email: User's email (for Firestore token retrieval)
         firebase_token: Firebase ID token (for Firestore token retrieval)
+    
+    Returns:
+        Dictionary with course details, enrollment link, and email status
     """
     try:
         service = await get_classroom_service(user_email, firebase_token)
         body = {
             "name": name,
             "ownerId": owner_id,
-            "courseState": "PROVISIONED"  # Can be ACTIVE, ARCHIVED, PROVISIONED, or DECLINED
+            # Don't set courseState - let Google Classroom use the default (PROVISIONED)
+            # Some accounts can't create courses directly in ACTIVE state
         }
         
         if section: body["section"] = section
@@ -527,8 +1033,96 @@ async def create_course(name, section=None, description_heading=None, descriptio
         if room: body["room"] = room
         
         result = service.courses().create(body=body).execute()
-        print(f"✅ Course created: {result.get('name')} (ID: {result.get('id')})")
-        return {"course": result}
+        
+        course_id = result.get('id')
+        course_name = result.get('name')
+        
+        print(f"✅ Course created: {course_name} (ID: {course_id})")
+        
+        # Get the enrollment code - this is what students use to join
+        enrollment_code = result.get('enrollmentCode')
+        
+        # Construct the enrollment link
+        # The correct format is: https://classroom.google.com/c/{enrollmentCode}
+        # NOT the course ID - the enrollment code is what allows students to join
+        enrollment_link = None
+        if enrollment_code:
+            enrollment_link = f"https://classroom.google.com/c/{enrollment_code}"
+            print(f"📧 Enrollment link: {enrollment_link}")
+        else:
+            # If no enrollment code (shouldn't happen), log a warning
+            print(f"⚠️  No enrollment code found for course {course_id}")
+            # Fallback: try to get the course again to fetch enrollment code
+            try:
+                updated_course = service.courses().get(id=course_id).execute()
+                enrollment_code = updated_course.get('enrollmentCode')
+                if enrollment_code:
+                    enrollment_link = f"https://classroom.google.com/c/{enrollment_code}"
+                    print(f"📧 Retrieved enrollment link: {enrollment_link}")
+            except Exception as e:
+                print(f"⚠️  Could not retrieve enrollment code: {e}")
+        
+        # Check course state and add appropriate message
+        course_state = result.get('courseState', 'PROVISIONED')
+        state_message = ""
+        if course_state == 'PROVISIONED':
+            state_message = "Note: Course created in PROVISIONED state. You may need to manually activate it in Google Classroom before students can join."
+        
+        response = {
+            "course": result,
+            "enrollment_link": enrollment_link,
+            "enrollment_code": enrollment_code,
+            "course_state": course_state,
+            "message": state_message
+        }
+        
+        # If student_list_id is provided, fetch the list and send emails
+        if student_list_id and user_email and firebase_token:
+            print(f"📋 Fetching student list: {student_list_id}")
+            
+            try:
+                # Fetch student list from Firebase
+                TOKEN_SERVICE_URL = os.getenv("TOKEN_SERVICE_URL", "http://localhost:8001")
+                
+                async with httpx.AsyncClient() as client:
+                    list_response = await client.get(
+                        f"{TOKEN_SERVICE_URL}/api/student-lists/{student_list_id}",
+                        headers={"Authorization": f"Bearer {firebase_token}"},
+                        timeout=10.0
+                    )
+                    
+                    if list_response.status_code == 200:
+                        student_list = list_response.json()
+                        student_emails = student_list.get("emails", [])
+                        
+                        if student_emails and enrollment_link and enrollment_code:
+                            # Send invitation emails
+                            teacher_name = user_email.split('@')[0].replace('.', ' ').title()
+                            email_result = await send_course_invitation_email(
+                                course_name=course_name,
+                                course_link=enrollment_link,
+                                enrollment_code=enrollment_code,
+                                student_emails=student_emails,
+                                teacher_name=teacher_name
+                            )
+                            
+                            response["email_sent"] = email_result.get("success", False)
+                            response["email_message"] = email_result.get("message") or email_result.get("error")
+                            response["email_recipients"] = email_result.get("recipients", [])
+                        else:
+                            response["email_sent"] = False
+                            response["email_message"] = "No students in the list or no enrollment link available"
+                    else:
+                        response["email_sent"] = False
+                        response["email_message"] = f"Failed to fetch student list: {list_response.status_code}"
+                        
+            except Exception as email_error:
+                print(f"⚠️  Error sending invitations: {email_error}")
+                response["email_sent"] = False
+                response["email_message"] = f"Error: {str(email_error)}"
+        
+        return response
+        
     except Exception as e:
         print(f"❌ Error creating course: {e}")
         return {"error": str(e)}
@@ -536,17 +1130,43 @@ async def create_course(name, section=None, description_heading=None, descriptio
 async def show_course_form(user_email=None, firebase_token=None):
     """
     Special tool that signals the UI to show the course creation form.
-    This is not a real API call - it's a UI control tool.
+    Fetches available student lists for the user.
     
     Args:
-        user_email: User's email (not used, but accepted for consistency)
-        firebase_token: Firebase ID token (not used, but accepted for consistency)
+        user_email: User's email (for fetching student lists)
+        firebase_token: Firebase ID token (for fetching student lists)
     """
     print("📋 Displaying course creation form")
     
+    student_lists = []
+    
+    # Fetch student lists if user is authenticated
+    if user_email and firebase_token:
+        try:
+            TOKEN_SERVICE_URL = os.getenv("TOKEN_SERVICE_URL", "http://localhost:8001")
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{TOKEN_SERVICE_URL}/api/student-lists",
+                    headers={"Authorization": f"Bearer {firebase_token}"},
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # The endpoint returns a list directly
+                    student_lists = data if isinstance(data, list) else []
+                    print(f"✅ Fetched {len(student_lists)} student lists for course form")
+                else:
+                    print(f"⚠️  Failed to fetch student lists: {response.status_code}")
+                    
+        except Exception as e:
+            print(f"⚠️  Error fetching student lists: {e}")
+    
     return {
         "action": "show_form",
-        "form_type": "course"
+        "form_type": "course",
+        "student_lists": student_lists
     }
 
 async def create_google_doc(title, content, user_email=None, firebase_token=None):
@@ -1217,12 +1837,20 @@ async def create_google_form(title, description=None, questions=None, user_email
         
         edit_url = f"https://docs.google.com/forms/d/{form_id}/edit"
         
-        # Build success message
+        # Build success message with properly formatted links
         num_questions = len(questions) if questions else 0
-        if num_questions > 0:
-            message = f"Successfully created Google Form: {title} with {num_questions} questions"
-        else:
-            message = f"Successfully created Google Form: {title} (empty, ready for questions)"
+        
+        message = f"""✅ Successfully created Google Form: **{title}**
+
+📊 **Form Details:**
+- Questions added: {num_questions}
+- Form ID: `{form_id}`
+
+🔗 **Links:**
+- **Edit Form (Teacher):** {edit_url}
+- **View/Share Form (Students):** {form_url}
+
+You can now edit the form or share the view link with students!"""
         
         return {
             "success": True,
@@ -1244,10 +1872,11 @@ async def create_google_form(title, description=None, questions=None, user_email
 TOOL_FUNCTIONS = {
     "list_courses": list_courses,
     "get_course": get_course,
+    "show_coursework_form": show_coursework_form,
     "list_coursework": list_coursework,
     "get_coursework": get_coursework,
+    "show_announcements_form": show_announcements_form,
     "list_announcements": list_announcements,
-    "list_students": list_students,
     "list_submissions": list_submissions,
     "create_coursework": create_coursework,
     "show_assignment_form": show_assignment_form,
@@ -1285,8 +1914,17 @@ CLASSROOM_TOOLS_DEF = types.Tool(
             )
         ),
         types.FunctionDeclaration(
+            name="show_coursework_form",
+            description="Show a form to select which course's assignments/coursework to view. This tool fetches all available courses and displays them in a dropdown. Use this when user wants to view or list coursework/assignments.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={},
+                required=[]
+            )
+        ),
+        types.FunctionDeclaration(
             name="list_coursework",
-            description="List assignments and coursework for a course.",
+            description="List assignments and coursework for a specific course. This is called internally after user selects a course from the form. Do not call this directly - use show_coursework_form instead.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
@@ -1309,24 +1947,22 @@ CLASSROOM_TOOLS_DEF = types.Tool(
             )
         ),
          types.FunctionDeclaration(
+            name="show_announcements_form",
+            description="Show a form to select which course's announcements to view. This tool fetches all available courses and displays them in a dropdown. Use this when user wants to view or list announcements.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={},
+                required=[]
+            )
+        ),
+        types.FunctionDeclaration(
             name="list_announcements",
-            description="List announcements for a course.",
+            description="List announcements for a specific course. This is called internally after user selects a course from the form. Do not call this directly - use show_announcements_form instead.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
                     "course_id": types.Schema(type="STRING", description="The ID of the course"),
                     "announcement_states": types.Schema(type="ARRAY", items=types.Schema(type="STRING")),
-                },
-                required=["course_id"]
-            )
-        ),
-        types.FunctionDeclaration(
-            name="list_students",
-            description="List students in a course.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "course_id": types.Schema(type="STRING", description="The ID of the course"),
                 },
                 required=["course_id"]
             )
@@ -1346,23 +1982,18 @@ CLASSROOM_TOOLS_DEF = types.Tool(
         ),
         types.FunctionDeclaration(
             name="show_assignment_form",
-            description="Show the assignment creation form to the user with a dropdown of courses. REQUIRED WORKFLOW: 1) First call list_courses() to get courses. 2) Take the 'courses' array from the list_courses response. 3) Pass that entire courses array as courses_data parameter to this tool. Example: If list_courses returns {'courses': [...]}, pass courses_data=[...] to this tool.",
+            description="Show the assignment creation form to the user. This tool automatically fetches all available courses and displays them in a dropdown for the user to select from. Call this tool directly when user wants to create an assignment.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
-                    "courses_data": types.Schema(
-                        type="ARRAY",
-                        items=types.Schema(type="OBJECT"),
-                        description="REQUIRED: The courses array from list_courses() response. This is the 'courses' field from the list_courses result, NOT the entire result object."
-                    ),
                     "course_id": types.Schema(type="STRING", description="Optional course ID to pre-select in dropdown if user mentioned a specific course."),
                 },
-                required=["courses_data"]
+                required=[]
             )
         ),
         types.FunctionDeclaration(
             name="create_coursework",
-            description="Create a new assignment with all details provided. Use this ONLY when you have all the assignment details from the form submission, NOT for initial user requests.",
+            description="Create a new assignment with all details provided, including optional file attachments. If the user message contains 'File IDs:', extract the comma-separated Drive file IDs and pass as file_ids parameter. Use this ONLY when you have all the assignment details from the form submission, NOT for initial user requests.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
@@ -1373,6 +2004,7 @@ CLASSROOM_TOOLS_DEF = types.Tool(
                     "due_time": types.Schema(type="STRING", description="HH:MM"),
                     "max_points": types.Schema(type="NUMBER", description="Max points"),
                     "work_type": types.Schema(type="STRING", description="ASSIGNMENT, SHORT_ANSWER_QUESTION, etc"),
+                    "file_ids": types.Schema(type="STRING", description="Optional comma-separated Google Drive file IDs to attach as materials. Extract from 'File IDs:' in the user message."),
                 },
                 required=["course_id", "title"]
             )
@@ -1388,7 +2020,7 @@ CLASSROOM_TOOLS_DEF = types.Tool(
         ),
         types.FunctionDeclaration(
             name="create_course",
-            description="Create a new course in Google Classroom. Use this ONLY when you have all the course details from the form submission, NOT for initial user requests.",
+            description="Create a new course in Google Classroom and optionally send invitation emails to students. Use this ONLY when you have all the course details from the form submission, NOT for initial user requests. If a student_list_id is provided, the system will automatically send invitation emails with the course join link to all students in that list.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
@@ -1398,6 +2030,7 @@ CLASSROOM_TOOLS_DEF = types.Tool(
                     "description": types.Schema(type="STRING", description="Full course description"),
                     "room": types.Schema(type="STRING", description="Room location"),
                     "owner_id": types.Schema(type="STRING", description="Teacher ID (defaults to 'me')"),
+                    "student_list_id": types.Schema(type="STRING", description="Optional: ID of the student list to send course invitations to. If provided, all students in the list will receive an email with the course join link."),
                 },
                 required=["name"]
             )

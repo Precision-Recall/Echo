@@ -6,7 +6,7 @@ import { PromptInput, PromptInputActions, PromptInputAction, PromptInputTextarea
 import { Button } from "@/components/ui/button";
 import { Loader } from "@/components/ui/loader";
 import { Markdown } from "@/components/ui/markdown";
-import { ArrowUp, Square, X } from "lucide-react";
+import { ArrowUp, Square, X, History } from "lucide-react";
 import { 
   ChainOfThought, 
   ChainOfThoughtContent, 
@@ -16,9 +16,12 @@ import {
 } from "@/components/ui/chain-of-thought";
 import { AssignmentForm, AssignmentData } from "./components/AssignmentForm";
 import { CourseForm, CourseData } from "./components/CourseForm";
+import CourseworkForm from "./components/CourseworkForm";
+import AnnouncementsForm from "./components/AnnouncementsForm";
 import { MessageWithLinks } from "./components/LinkButton";
 import { ToolExecutionSteps } from "./components/ToolExecutionSteps";
 import { useAuth } from "./contexts/AuthContext";
+import ConversationHistory from "./components/ConversationHistory";
 
 interface ToolStep {
   tool: string;
@@ -40,6 +43,14 @@ interface Course {
   descriptionHeading?: string;
 }
 
+interface StudentList {
+  id: string;
+  department_name: string;
+  department_year: string;
+  section: string;
+  emails: string[];
+}
+
 interface Message {
   id: string;
   role: 'user' | 'model';
@@ -47,9 +58,14 @@ interface Message {
   toolSteps?: ToolStep[];
   thoughts?: ThoughtStep[];
   showAssignmentForm?: boolean;
+  showCourseworkForm?: boolean;
+  showAnnouncementsForm?: boolean;
   assignmentCourseId?: string;
   assignmentCourses?: Course[];
+  courseworkCourses?: Course[];
+  announcementsCourses?: Course[];
   showCourseForm?: boolean;
+  studentLists?: StudentList[];
 }
 
 // Helper function to create user-friendly error messages
@@ -86,6 +102,15 @@ export default function ChatInterface() {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isToolProcessing, setIsToolProcessing] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  
+  // Conversation History State
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const TOKEN_SERVICE_URL = process.env.NEXT_PUBLIC_TOKEN_SERVICE_URL || 'http://localhost:8001';
+  
+  // Track saved messages to prevent duplicates
+  const savedMessagesRef = useRef<Set<string>>(new Set());
+  const savingInProgressRef = useRef<Set<string>>(new Set());
   
   
   // Thread ID for conversation memory
@@ -158,7 +183,12 @@ export default function ChatInterface() {
               const steps = [...lastMsg.toolSteps];
               const stepIndex = steps.findIndex(s => s.tool === message.tool && s.status === 'running');
               if (stepIndex !== -1) {
-                steps[stepIndex] = { ...steps[stepIndex], result: message.result, status: 'completed' };
+                const isError = Boolean(message.result?.error);
+                steps[stepIndex] = { 
+                  ...steps[stepIndex], 
+                  result: message.result, 
+                  status: isError ? 'error' : 'completed' 
+                };
                 return [...prev.slice(0, -1), { ...lastMsg, toolSteps: steps }];
               }
             }
@@ -187,15 +217,29 @@ export default function ChatInterface() {
               return prev;
             }
             
-            console.log('✅ [FORM] Creating assignment form');
+            console.log('✅ [FORM] Adding assignment form to existing message');
             
-            // Always create a new message for the form
+            // Update the last model message (which has the tool steps) to add the form
+            const lastMsg = prev[prev.length - 1];
+            if (lastMsg && lastMsg.role === 'model') {
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...lastMsg,
+                  showAssignmentForm: true,
+                  assignmentCourseId: courseId,
+                  assignmentCourses: courses
+                }
+              ];
+            }
+            
+            // Fallback: create new message if no model message exists
             return [
               ...prev,
               {
                 id: `form-${Date.now()}`,
                 role: 'model',
-                text: '📝 Please select a course and fill in the assignment details below:',
+                text: '',
                 showAssignmentForm: true,
                 assignmentCourseId: courseId,
                 assignmentCourses: courses
@@ -210,6 +254,9 @@ export default function ChatInterface() {
           // AI has decided to show the course creation form
           console.log('📚 [FORM] Received show_course_form');
           
+          const studentLists = message.data?.student_lists || [];
+          console.log(`📚 [FORM] Student lists available: ${studentLists.length}`);
+          
           setMessages(prev => {
             // Check if ANY message already has a course form (prevent duplicates)
             const hasExistingForm = prev.some(msg => msg.showCourseForm);
@@ -218,16 +265,122 @@ export default function ChatInterface() {
               return prev;
             }
             
-            console.log('✅ [FORM] Creating course form');
+            console.log('✅ [FORM] Adding course form to existing message');
             
-            // Always create a new message for the form
+            // Update the last model message (which has the tool steps) to add the form
+            const lastMsg = prev[prev.length - 1];
+            if (lastMsg && lastMsg.role === 'model') {
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...lastMsg,
+                  showCourseForm: true,
+                  studentLists: studentLists
+                }
+              ];
+            }
+            
+            // Fallback: create new message if no model message exists
             return [
               ...prev,
               {
                 id: `form-${Date.now()}`,
                 role: 'model',
-                text: '📚 Let me help you create a new course. Please fill in the details below:',
-                showCourseForm: true
+                text: '',
+                showCourseForm: true,
+                studentLists: studentLists
+              }
+            ];
+          });
+          setIsChatLoading(false);
+          setIsToolProcessing(false);
+          break;
+        
+        case 'show_coursework_form':
+          // AI has decided to show the coursework selection form
+          console.log('📋 [FORM] Received show_coursework_form');
+          
+          const courseworkCourses = message.data?.courses || [];
+          console.log(`📋 [FORM] Courses available: ${courseworkCourses.length}`);
+          
+          setMessages(prev => {
+            // Check if ANY message already has a coursework form (prevent duplicates)
+            const hasExistingForm = prev.some(msg => msg.showCourseworkForm);
+            if (hasExistingForm) {
+              console.warn('⚠️ [FORM] Coursework form already exists, skipping duplicate');
+              return prev;
+            }
+            
+            console.log('✅ [FORM] Adding coursework form to existing message');
+            
+            // Update the last model message (which has the tool steps) to add the form
+            const lastMsg = prev[prev.length - 1];
+            if (lastMsg && lastMsg.role === 'model') {
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...lastMsg,
+                  showCourseworkForm: true,
+                  courseworkCourses: courseworkCourses
+                }
+              ];
+            }
+            
+            // Fallback: create new message if no model message exists
+            return [
+              ...prev,
+              {
+                id: `form-${Date.now()}`,
+                role: 'model',
+                text: '',
+                showCourseworkForm: true,
+                courseworkCourses: courseworkCourses
+              }
+            ];
+          });
+          setIsChatLoading(false);
+          setIsToolProcessing(false);
+          break;
+        
+        case 'show_announcements_form':
+          // AI has decided to show the announcements selection form
+          console.log('📢 [FORM] Received show_announcements_form');
+          
+          const announcementsCourses = message.data?.courses || [];
+          console.log(`📢 [FORM] Courses available: ${announcementsCourses.length}`);
+          
+          setMessages(prev => {
+            // Check if ANY message already has an announcements form (prevent duplicates)
+            const hasExistingForm = prev.some(msg => msg.showAnnouncementsForm);
+            if (hasExistingForm) {
+              console.warn('⚠️ [FORM] Announcements form already exists, skipping duplicate');
+              return prev;
+            }
+            
+            console.log('✅ [FORM] Adding announcements form to existing message');
+            
+            // Update the last model message (which has the tool steps) to add the form
+            const lastMsg = prev[prev.length - 1];
+            if (lastMsg && lastMsg.role === 'model') {
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...lastMsg,
+                  showAnnouncementsForm: true,
+                  announcementsCourses: announcementsCourses
+                }
+              ];
+            }
+            
+            // Fallback: create new message if no model message exists
+            return [
+              ...prev,
+              {
+                id: `form-${Date.now()}`,
+                role: 'model',
+                text: '',
+                showAnnouncementsForm: true,
+                announcementsCourses: announcementsCourses
               }
             ];
           });
@@ -248,7 +401,121 @@ export default function ChatInterface() {
     }
   }, [connectChat, user]);
 
+  // Auto-save AI responses to conversation
+  useEffect(() => {
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage && lastMessage.role === 'model' && lastMessage.text && currentConversationId) {
+      // Save assistant message (debounced to avoid saving partial responses)
+      const timer = setTimeout(() => {
+        saveMessageToConversation(currentConversationId, 'assistant', lastMessage.text);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [messages, currentConversationId]);
+
   // Voice mode removed
+
+  // Conversation History Functions
+  const createNewConversation = async () => {
+    if (!user?.email) return null;
+    
+    try {
+      const response = await fetch(
+        `${TOKEN_SERVICE_URL}/api/conversations?email=${encodeURIComponent(user.email)}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ title: 'New Conversation' }),
+        }
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        return data.id;
+      }
+    } catch (error) {
+      console.error('Error creating conversation:', error);
+    }
+    return null;
+  };
+
+  const saveMessageToConversation = async (conversationId: string, role: 'user' | 'assistant', content: string) => {
+    if (!user?.email) return;
+    
+    // Create unique key for this message
+    const messageKey = `${conversationId}:${role}:${content}`;
+    
+    // Check if already saved or currently saving
+    if (savedMessagesRef.current.has(messageKey) || savingInProgressRef.current.has(messageKey)) {
+      console.log('⏭️ Message already saved or saving, skipping:', messageKey.substring(0, 50));
+      return;
+    }
+    
+    // Mark as saving
+    savingInProgressRef.current.add(messageKey);
+    
+    try {
+      await fetch(
+        `${TOKEN_SERVICE_URL}/api/conversations/${conversationId}/messages?email=${encodeURIComponent(user.email)}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ role, content }),
+        }
+      );
+      
+      // Mark as saved
+      savedMessagesRef.current.add(messageKey);
+      console.log('✅ Message saved:', messageKey.substring(0, 50));
+    } catch (error) {
+      console.error('Error saving message:', error);
+    } finally {
+      // Remove from saving set
+      savingInProgressRef.current.delete(messageKey);
+    }
+  };
+
+  const loadConversation = async (conversationId: string) => {
+    if (!user?.email) return;
+    
+    try {
+      const response = await fetch(
+        `${TOKEN_SERVICE_URL}/api/conversations/${conversationId}?email=${encodeURIComponent(user.email)}`
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Convert conversation messages to our Message format
+        const loadedMessages: Message[] = data.messages.map((msg: any) => ({
+          id: msg.id,
+          role: msg.role === 'user' ? 'user' : 'model',
+          text: msg.content,
+        }));
+        
+        setMessages(loadedMessages);
+        setCurrentConversationId(conversationId);
+        
+        // Clear and rebuild saved messages tracking
+        savedMessagesRef.current.clear();
+        savingInProgressRef.current.clear();
+        
+        // Mark all loaded messages as already saved
+        data.messages.forEach((msg: any) => {
+          const messageKey = `${conversationId}:${msg.role}:${msg.content}`;
+          savedMessagesRef.current.add(messageKey);
+        });
+        
+        console.log(`✅ Loaded conversation ${conversationId} with ${loadedMessages.length} messages`);
+      }
+    } catch (error) {
+      console.error('Error loading conversation:', error);
+    }
+  };
 
   // Chat Submission
   const handleChatSubmit = () => {
@@ -266,21 +533,152 @@ export default function ChatInterface() {
         return;
     }
     
-    // Send message to backend - AI will decide via tool if form should be shown
-    sendText(chatInput, threadId);
-    setMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', text: chatInput }]);
+    const userMessage = chatInput;
+    
+    // Send message to backend immediately - NO BLOCKING
+    sendText(userMessage, threadId);
+    setMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', text: userMessage }]);
     setChatInput("");
     setIsChatLoading(true);
     setIsToolProcessing(false);
+    
+    // Save to conversation history in background (non-blocking)
+    if (!currentConversationId && messages.length === 0) {
+      // Create conversation and save message in background
+      createNewConversation().then(newConvId => {
+        if (newConvId) {
+          setCurrentConversationId(newConvId);
+          saveMessageToConversation(newConvId, 'user', userMessage);
+        }
+      });
+    } else if (currentConversationId) {
+      // Save user message to existing conversation in background
+      saveMessageToConversation(currentConversationId, 'user', userMessage);
+    }
   };
   
   // Handle assignment form submission
-  const handleAssignmentSubmit = (messageId: string, data: AssignmentData) => {
+  const handleAssignmentSubmit = async (messageId: string, data: AssignmentData) => {
     // Remove the form message
     setMessages(prev => prev.filter(msg => msg.id !== messageId));
     
-    // Send assignment creation request through chat
-    const assignmentMessage = `Create an assignment with the following details:
+    // Upload files first if present
+    let uploadedFiles: any[] = [];
+    if (data.files && data.files.length > 0 && user) {
+      console.log(`📁 Uploading ${data.files.length} file(s) to backend...`);
+      
+      // Add upload progress card to the messages
+      const uploadStep: ToolStep = {
+        tool: 'upload_files',
+        args: { count: data.files.length },
+        status: 'running'
+      };
+      
+      setMessages(prev => {
+        const lastMsg = prev[prev.length - 1];
+        // If last message is from model and has tool steps, append to it
+        if (lastMsg && lastMsg.role === 'model' && lastMsg.toolSteps) {
+          return [...prev.slice(0, -1), { 
+            ...lastMsg, 
+            toolSteps: [...lastMsg.toolSteps, uploadStep] 
+          }];
+        }
+        // Otherwise create new message with the upload step
+        return [...prev, {
+          id: Date.now().toString(),
+          role: 'model',
+          text: '',
+          toolSteps: [uploadStep]
+        }];
+      });
+      
+      try {
+        const idToken = await user.getIdToken();
+        const formData = new FormData();
+        
+        // Add all files to form data
+        data.files.forEach((file, index) => {
+          formData.append(`file_${index}`, file);
+        });
+        
+        // Upload files via HTTP endpoint
+        const response = await fetch('http://localhost:8000/api/upload-files', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${idToken}`,
+            'X-User-Email': user.email || ''
+          },
+          body: formData
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          uploadedFiles = result.files || [];
+          console.log(`✅ Uploaded ${uploadedFiles.length} file(s)`);
+          
+          // Update upload step to completed
+          setMessages(prev => {
+            const lastMsg = prev[prev.length - 1];
+            if (lastMsg && lastMsg.role === 'model' && lastMsg.toolSteps) {
+              const steps = [...lastMsg.toolSteps];
+              const uploadStepIndex = steps.findIndex(s => s.tool === 'upload_files' && s.status === 'running');
+              if (uploadStepIndex !== -1) {
+                steps[uploadStepIndex] = {
+                  ...steps[uploadStepIndex],
+                  result: { files: uploadedFiles },
+                  status: 'completed'
+                };
+                return [...prev.slice(0, -1), { ...lastMsg, toolSteps: steps }];
+              }
+            }
+            return prev;
+          });
+        } else {
+          console.error('❌ File upload failed:', await response.text());
+          
+          // Update upload step to error
+          setMessages(prev => {
+            const lastMsg = prev[prev.length - 1];
+            if (lastMsg && lastMsg.role === 'model' && lastMsg.toolSteps) {
+              const steps = [...lastMsg.toolSteps];
+              const uploadStepIndex = steps.findIndex(s => s.tool === 'upload_files' && s.status === 'running');
+              if (uploadStepIndex !== -1) {
+                steps[uploadStepIndex] = {
+                  ...steps[uploadStepIndex],
+                  result: { error: 'Upload failed' },
+                  status: 'error'
+                };
+                return [...prev.slice(0, -1), { ...lastMsg, toolSteps: steps }];
+              }
+            }
+            return prev;
+          });
+        }
+      } catch (error) {
+        console.error('❌ Error uploading files:', error);
+        
+        // Update upload step to error
+        setMessages(prev => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg && lastMsg.role === 'model' && lastMsg.toolSteps) {
+            const steps = [...lastMsg.toolSteps];
+            const uploadStepIndex = steps.findIndex(s => s.tool === 'upload_files' && s.status === 'running');
+            if (uploadStepIndex !== -1) {
+              steps[uploadStepIndex] = {
+                ...steps[uploadStepIndex],
+                result: { error: String(error) },
+                status: 'error'
+              };
+              return [...prev.slice(0, -1), { ...lastMsg, toolSteps: steps }];
+            }
+          }
+          return prev;
+        });
+      }
+    }
+    
+    // Send assignment creation request through chat with file IDs only
+    let assignmentMessage = `Create an assignment with the following details:
 Course ID: ${data.course_id}
 Title: ${data.title}
 Description: ${data.description || 'N/A'}
@@ -288,13 +686,14 @@ Due Date: ${data.due_date || 'N/A'}
 Due Time: ${data.due_time || 'N/A'}
 Max Points: ${data.max_points}
 Work Type: ${data.work_type}`;
+
+    if (uploadedFiles.length > 0) {
+      // Only send file IDs, not the full content
+      assignmentMessage += `\nFile IDs: ${uploadedFiles.map(f => f.id).join(',')}`;
+    }
     
     sendText(assignmentMessage, threadId);
-    setMessages(prev => [...prev, { 
-      id: Date.now().toString(), 
-      role: 'user', 
-      text: `Creating assignment: ${data.title}` 
-    }]);
+    // Don't add a user message - let the tool execution show the progress
     setIsChatLoading(true);
   };
   
@@ -322,19 +721,61 @@ Work Type: ${data.work_type}`;
     setMessages(prev => prev.filter(msg => msg.id !== messageId));
     
     // Send course creation request through chat
-    const courseMessage = `Create a course with the following details:
+    let courseMessage = `Create a course with the following details:
 Name: ${data.name}
 Section: ${data.section || 'N/A'}
 Description Heading: ${data.description_heading || 'N/A'}
 Description: ${data.description || 'N/A'}
 Room: ${data.room || 'N/A'}`;
+
+    if (data.student_list_id) {
+      courseMessage += `\nStudent List ID: ${data.student_list_id}`;
+    }
     
     sendText(courseMessage, threadId);
     setMessages(prev => [...prev, { 
       id: Date.now().toString(), 
       role: 'user', 
-      text: `Creating course: ${data.name}` 
+      text: `Creating course: ${data.name}${data.student_list_id ? ' (with student invitations)' : ''}` 
     }]);
+    setIsChatLoading(true);
+  };
+  
+  const handleCourseworkSubmit = (courseId: string) => {
+    // Remove the form from UI
+    setMessages(prev => prev.map(msg => {
+      if (msg.showCourseworkForm) {
+        // Remove the form but keep the message structure
+        const { showCourseworkForm, courseworkCourses, ...rest } = msg;
+        return rest;
+      }
+      return msg;
+    }));
+    
+    // Send request to list coursework for the selected course
+    const message = `List all coursework for course ID: ${courseId}`;
+    sendText(message, threadId);
+    
+    // Set loading state
+    setIsChatLoading(true);
+  };
+
+  const handleAnnouncementsSubmit = (courseId: string) => {
+    // Remove the form from UI
+    setMessages(prev => prev.map(msg => {
+      if (msg.showAnnouncementsForm) {
+        // Remove the form but keep the message structure
+        const { showAnnouncementsForm, announcementsCourses, ...rest } = msg;
+        return rest;
+      }
+      return msg;
+    }));
+    
+    // Send request to list announcements for the selected course
+    const message = `List all announcements for course ID: ${courseId}`;
+    sendText(message, threadId);
+    
+    // Set loading state
     setIsChatLoading(true);
   };
   
@@ -362,13 +803,59 @@ Room: ${data.room || 'N/A'}`;
 
   // Voice mode removed
 
+  // New Chat Handler
+  const handleNewChat = () => {
+    setMessages([]);
+    setCurrentConversationId(null);
+    setChatInput("");
+    setIsChatLoading(false);
+    setIsToolProcessing(false);
+    // Clear saved messages tracking for new conversation
+    savedMessagesRef.current.clear();
+    savingInProgressRef.current.clear();
+  };
+
   // Chat View
     return (
-      <div className="h-full bg-white text-gray-900 flex flex-col overflow-hidden">
+      <div className="h-full bg-white text-gray-900 flex flex-col w-full relative">
+        {/* Conversation History Sidebar */}
+        <ConversationHistory
+          isOpen={isHistoryOpen}
+          onClose={() => setIsHistoryOpen(false)}
+          onLoadConversation={loadConversation}
+        />
+
+        {/* Sticky Header - Transparent */}
+        <div className="sticky top-0 z-20 px-6 py-3">
+          <div className="flex items-center justify-between w-full">
+            {/* New Chat Button - Far Left */}
+            <button
+              onClick={handleNewChat}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+              New Chat
+            </button>
+            
+            {/* History Button - Far Right (no background) */}
+            <button
+              onClick={() => setIsHistoryOpen(true)}
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Chat History"
+            >
+              <History className="w-5 h-5 text-gray-600" />
+            </button>
+          </div>
+        </div>
+
         {/* Main Content - Scrollable Area */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden px-6 pt-6 pb-32">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden px-6 pt-6 pb-48 w-full">
+
+
           {messages.length === 0 ? (
-            <div className="text-center max-w-2xl mx-auto mt-20">
+            <div className="text-center max-w-2xl mx-auto mt-20 w-full">
               <h2 className="text-3xl font-medium text-gray-900 mb-4">
                 Ask anything
               </h2>
@@ -379,22 +866,29 @@ Room: ${data.room || 'N/A'}`;
           ) : (
             <div className="w-full max-w-3xl mx-auto space-y-6 pb-4">
               {messages.map((msg) => (
-                <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} gap-1`}>
-                  {/* Tool Execution Steps - Left Aligned with AI Message */}
+                <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} gap-3`}>
+                  {/* Tool Execution Steps - Stacked cards, no bubble */}
                   {msg.toolSteps && msg.toolSteps.length > 0 && msg.role === 'model' && (
-                    <div className="max-w-[85%]">
+                    <div className="w-full max-w-[85%]">
                       <ToolExecutionSteps steps={msg.toolSteps} />
                     </div>
                   )}
                   
-                  <div className={`max-w-[85%] rounded-2xl px-5 py-3 ${
-                    msg.role === 'user' 
-                      ? 'bg-gray-100 text-gray-900' 
-                      : 'bg-white border border-gray-200 text-gray-900'
-                  }`}>
-                    {/* Thinking Steps - Inside bubble */}
+                  {/* User messages: keep bubble */}
+                  {msg.role === 'user' && (
+                    <div className="max-w-[85%] rounded-2xl px-5 py-3 bg-gray-100 text-gray-900">
+                      <Markdown className="markdown-content">
+                        {msg.text}
+                      </Markdown>
+                    </div>
+                  )}
+                  
+                  {/* AI messages: NO bubble, just plain text */}
+                  {msg.role === 'model' && (
+                    <>
+                      {/* Thinking Steps - Plain text with collapsible */}
                     {msg.thoughts && msg.thoughts.length > 0 && (
-                      <div className="mb-4 w-full">
+                        <div className="w-full max-w-[85%]">
                         <ChainOfThought>
                           {msg.thoughts.map((thought, idx) => (
                             <ChainOfThoughtStep key={`thought-${thought.id}`}>
@@ -414,20 +908,22 @@ Room: ${data.room || 'N/A'}`;
                       </div>
                     )}
                     
-                    {/* Message Content - Markdown with proper formatting */}
-                    {msg.text && !msg.showAssignmentForm && !msg.showCourseForm && (
-                      msg.text.match(/https:\/\/docs\.google\.com\/(forms|document|spreadsheets)/) ? (
+                      {/* AI Text - Plain, no bubble */}
+                      {msg.text && !msg.showAssignmentForm && !msg.showCourseForm && !msg.showCourseworkForm && !msg.showAnnouncementsForm && (
+                        <div className="w-full max-w-[85%] text-gray-900">
+                          {msg.text.match(/https:\/\/docs\.google\.com\/(forms|document|spreadsheets)/) ? (
                         <MessageWithLinks text={msg.text} />
                       ) : (
                         <Markdown className="markdown-content">
                         {msg.text}
                       </Markdown>
-                      )
+                          )}
+                        </div>
                     )}
                     
-                    {/* Assignment Form - Inline */}
-                    {msg.showAssignmentForm && !msg.showCourseForm && (
-                      <div className="w-full">
+                      {/* Assignment Form - Plain container */}
+                      {msg.showAssignmentForm && (
+                        <div className="w-full max-w-[85%]">
                         <AssignmentForm
                           courseId={msg.assignmentCourseId}
                           courses={msg.assignmentCourses}
@@ -437,16 +933,38 @@ Room: ${data.room || 'N/A'}`;
                       </div>
                     )}
                     
-                    {/* Course Form - Inline */}
-                    {msg.showCourseForm && !msg.showAssignmentForm && (
-                      <div className="w-full">
+                      {/* Course Form - Plain container */}
+                      {msg.showCourseForm && (
+                        <div className="w-full max-w-[85%]">
                         <CourseForm
                           onSubmit={(data) => handleCourseSubmit(msg.id, data)}
                           onCancel={() => handleCourseCancel(msg.id)}
+                            studentLists={msg.studentLists}
+                          />
+                        </div>
+                      )}
+                      
+                      {/* Coursework Form - Plain container */}
+                      {msg.showCourseworkForm && (
+                        <div className="w-full max-w-[85%]">
+                          <CourseworkForm
+                            courses={msg.courseworkCourses || []}
+                            onSubmit={handleCourseworkSubmit}
                         />
                       </div>
                     )}
+                      
+                      {/* Announcements Form - Plain container */}
+                      {msg.showAnnouncementsForm && (
+                        <div className="w-full max-w-[85%]">
+                          <AnnouncementsForm
+                            courses={msg.announcementsCourses || []}
+                            onSubmit={handleAnnouncementsSubmit}
+                          />
                   </div>
+                      )}
+                    </>
+                  )}
                 </div>
               ))}
               
@@ -463,14 +981,16 @@ Room: ${data.room || 'N/A'}`;
                    <span className="text-sm text-gray-500">Processing...</span>
                 </div>
               )}
+              {/* Extra spacer to ensure content is visible above fixed input */}
+              <div className="h-40" />
               <div ref={chatEndRef} />
             </div>
           )}
         </main>
 
-        {/* Fixed Bottom Input */}
-        <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-sm p-6">
-          <div className="max-w-3xl mx-auto">
+        {/* Fixed Bottom Input - Always at bottom, never expands */}
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-30 max-h-32">
+          <div className="max-w-3xl mx-auto px-6 py-4">
             <PromptInput
               value={chatInput}
               onValueChange={setChatInput}

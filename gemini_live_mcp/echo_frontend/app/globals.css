@@ -284,3 +284,26 @@
 .markdown-content hr {
   @apply border-gray-300 my-4;
 }
+
+/* Sidebar: Keep gap fixed to icon width so content doesn't shift */
+[data-slot="sidebar-gap"] {
+  width: var(--sidebar-width-icon) !important;
+}
+
+/* Make sidebar overlay content instead of pushing it */
+[data-slot="sidebar-container"] {
+  position: fixed !important;
+  z-index: 40 !important;
+}
+
+/* Force SidebarInset to stay in place - don't shift with sidebar */
+[data-slot="sidebar-inset"] {
+  margin-left: var(--sidebar-width-icon) !important;
+  transition: none !important;
+}
+
+/* Ensure content area doesn't respond to sidebar state changes */
+.group[data-state="expanded"] ~ [data-slot="sidebar-inset"],
+.group[data-state="collapsed"] ~ [data-slot="sidebar-inset"] {
+  margin-left: var(--sidebar-width-icon) !important;
+}

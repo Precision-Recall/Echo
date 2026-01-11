@@ -4,12 +4,40 @@ FastAPI backend service for managing Google OAuth tokens in Firebase Firestore.
 
 ## Features
 
+### OAuth Token Management
 - Store OAuth tokens (access token, refresh token) in Firestore
 - Retrieve tokens for authenticated users
 - Delete tokens when user logs out
 - Check token status
 - Firebase Authentication verification
 - User can only access their own tokens
+
+### Student List Management
+- Create student lists with department info and email lists
+- Automatic email parsing from text (supports comma, space, newline separated)
+- Fetch student lists (only created by logged-in user)
+- Update existing student lists
+- Delete student lists
+- Per-user isolation (users only see their own lists)
+
+### Conversation History Management
+- Store and retrieve chat conversation history
+- Automatic conversation title generation from first message
+- Paginated conversation list (10 per page)
+- Full message history retrieval
+- Create new conversations/sessions
+- Add messages to conversations
+- Delete conversations with all messages
+- Per-user isolation (users only see their own conversations)
+
+### Forms History Management
+- Store Google Forms creation history with metadata
+- Save chat conversations for each form editing session
+- Paginated forms list (10 per page)
+- Full form details with chat history retrieval
+- Add messages to form chat history
+- Delete forms with all messages
+- Per-user isolation (users only see their own forms)
 
 ## Setup
 
@@ -169,6 +197,123 @@ Response:
 }
 ```
 
+### List Conversations (Paginated)
+
+```http
+GET /api/conversations?page=1&limit=10
+Authorization: Bearer <firebase-id-token>
+```
+
+Response:
+```json
+[
+  {
+    "id": "conv_abc123",
+    "title": "Create assignment for Math...",
+    "created_at": "2024-01-15T10:30:00",
+    "updated_at": "2024-01-15T11:45:00"
+  },
+  {
+    "id": "conv_def456",
+    "title": "List all my courses",
+    "created_at": "2024-01-14T09:20:00",
+    "updated_at": "2024-01-14T09:25:00"
+  }
+]
+```
+
+### Get Conversation with Messages
+
+```http
+GET /api/conversations/{conversation_id}
+Authorization: Bearer <firebase-id-token>
+```
+
+Response:
+```json
+{
+  "id": "conv_abc123",
+  "title": "Create assignment for Math...",
+  "created_at": "2024-01-15T10:30:00",
+  "updated_at": "2024-01-15T11:45:00",
+  "messages": [
+    {
+      "id": "msg_001",
+      "role": "user",
+      "content": "Create assignment for Math class",
+      "timestamp": "2024-01-15T10:30:00"
+    },
+    {
+      "id": "msg_002",
+      "role": "assistant",
+      "content": "I'll help you create an assignment...",
+      "timestamp": "2024-01-15T10:30:15"
+    }
+  ]
+}
+```
+
+### Create New Conversation
+
+```http
+POST /api/conversations
+Authorization: Bearer <firebase-id-token>
+Content-Type: application/json
+
+{
+  "title": "New Chat Session"
+}
+```
+
+Response:
+```json
+{
+  "id": "conv_xyz789",
+  "title": "New Chat Session",
+  "created_at": "2024-01-15T12:00:00",
+  "updated_at": "2024-01-15T12:00:00"
+}
+```
+
+### Add Message to Conversation
+
+```http
+POST /api/conversations/{conversation_id}/messages
+Authorization: Bearer <firebase-id-token>
+Content-Type: application/json
+
+{
+  "role": "user",
+  "content": "List all my courses"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message_id": "msg_003",
+  "conversation_id": "conv_xyz789",
+  "timestamp": "2024-01-15T12:01:00"
+}
+```
+
+### Delete Conversation
+
+```http
+DELETE /api/conversations/{conversation_id}
+Authorization: Bearer <firebase-id-token>
+```
+
+Response:
+```json
+{
+  "success": true,
+  "conversation_id": "conv_xyz789",
+  "messages_deleted": 5
+}
+```
+
 ## Security
 
 - All endpoints require Firebase ID token in Authorization header
@@ -178,6 +323,7 @@ Response:
 
 ## Firestore Structure
 
+### OAuth Tokens
 ```
 users/
   {email}/
@@ -186,6 +332,22 @@ users/
     last_updated: string (ISO 8601)
     expires_in: number (optional)
     scope: string (optional)
+```
+
+### Conversation History
+```
+users/
+  {email}/
+    conversations/
+      {conversationId}/
+        title: string
+        createdAt: timestamp (ISO 8601)
+        updatedAt: timestamp (ISO 8601)
+        messages/
+          {messageId}/
+            role: string ("user" or "assistant")
+            content: string
+            timestamp: timestamp (ISO 8601)
 ```
 
 ## Error Handling
@@ -244,4 +406,23 @@ async def get_user_tokens(user_email: str, firebase_token: str):
     )
     return response.json()
 ```
+
+## Additional Documentation
+
+- **[Student Lists API](STUDENT_LISTS_API.md)** - Complete documentation for student list management
+- **[Conversation History API](CONVERSATION_HISTORY_API.md)** - Complete documentation for conversation history management
+- **[Forms History API](FORMS_HISTORY_API.md)** - Complete documentation for Google Forms history management
+
+## Testing
+
+### Test Conversation History API
+
+```bash
+python test_conversations.py
+```
+
+Make sure to:
+1. Start the backend service first
+2. Replace `FIREBASE_TOKEN` in the test script with your actual token
+3. Have Firebase credentials properly configured
 

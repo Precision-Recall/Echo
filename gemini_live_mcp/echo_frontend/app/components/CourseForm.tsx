@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Users } from "lucide-react";
 
 export interface CourseData {
   name: string;
@@ -9,20 +11,31 @@ export interface CourseData {
   description_heading: string;
   description: string;
   room: string;
+  student_list_id?: string;
+}
+
+interface StudentList {
+  id: string;
+  department_name: string;
+  department_year: string;
+  section: string;
+  emails: string[];
 }
 
 interface CourseFormProps {
   onSubmit: (data: CourseData) => void;
   onCancel: () => void;
+  studentLists?: StudentList[];
 }
 
-export function CourseForm({ onSubmit, onCancel }: CourseFormProps) {
+export function CourseForm({ onSubmit, onCancel, studentLists = [] }: CourseFormProps) {
   const [formData, setFormData] = useState<CourseData>({
     name: '',
     section: '',
     description_heading: '',
     description: '',
-    room: ''
+    room: '',
+    student_list_id: undefined
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -128,6 +141,40 @@ export function CourseForm({ onSubmit, onCancel }: CourseFormProps) {
             placeholder="e.g., Room 301, Lab A"
           />
         </div>
+
+        {/* Student List Selection */}
+        {studentLists && studentLists.length > 0 && (
+          <div>
+            <label htmlFor="student_list" className="block text-xs font-medium text-gray-700 mb-1.5">
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Send Invitations to Student List (Optional)
+              </div>
+            </label>
+            <Select
+              value={formData.student_list_id || undefined}
+              onValueChange={(value) => setFormData(prev => ({ 
+                ...prev, 
+                student_list_id: value === "none" ? undefined : value 
+              }))}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select a student list (optional)" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None - Don't send invitations</SelectItem>
+                {studentLists.map((list) => (
+                  <SelectItem key={list.id} value={list.id}>
+                    {list.department_name} - {list.department_year} ({list.section}) • {list.emails.length} students
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-gray-500 mt-1">
+              If selected, all students in the list will receive an email invitation with the course join link.
+            </p>
+          </div>
+        )}
 
         {/* Action Buttons */}
         <div className="flex justify-end space-x-2 pt-2">

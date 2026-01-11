@@ -1,31 +1,41 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ProtectedRoute } from "../components/ProtectedRoute";
 import { AppSidebar } from "../components/AppSidebar";
 import { ClassroomAuthPrompt } from "../components/ClassroomAuthPrompt";
 import { useClassroomAuth } from "../hooks/useClassroomAuth";
 import { Loader } from "@/components/ui/loader";
 import ChatInterface from "../ChatInterface";
-import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar";
 
-export default function ChatPage() {
+function ChatContent() {
   const { hasTokens, loading: checkingTokens } = useClassroomAuth();
   const [showPrompt, setShowPrompt] = useState(true);
+  const { setOpen, state } = useSidebar();
+
+  // Handle hover to expand sidebar
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      // Expand sidebar when mouse is within 80px of left edge (hovering over collapsed sidebar)
+      if (e.clientX <= 80) {
+        setOpen(true);
+      }
+      // Collapse sidebar when mouse moves away (beyond 280px from left)
+      else if (e.clientX > 280) {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, [setOpen]);
 
   return (
-    <ProtectedRoute>
-      <SidebarProvider>
-        <AppSidebar />
         <SidebarInset>
           <div className="flex h-screen flex-col">
-            {/* Minimal header with just the toggle button */}
-            <div className="flex h-12 shrink-0 items-center px-4">
-              <SidebarTrigger />
-            </div>
-
         {/* Main Content */}
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 relative">
           {checkingTokens ? (
             <div className="flex items-center justify-center h-full">
               <Loader variant="circular" size="lg" />
@@ -43,6 +53,15 @@ export default function ChatPage() {
         </div>
       </div>
         </SidebarInset>
+  );
+}
+
+export default function ChatPage() {
+  return (
+    <ProtectedRoute>
+      <SidebarProvider defaultOpen={false} style={{ "--sidebar-width": "16rem" } as React.CSSProperties}>
+        <AppSidebar />
+        <ChatContent />
       </SidebarProvider>
     </ProtectedRoute>
   );

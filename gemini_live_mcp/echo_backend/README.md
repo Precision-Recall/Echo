@@ -1,6 +1,8 @@
 # Echo Backend - Gemini Live API Relay
 
-FastAPI WebSocket server that relays real-time audio/text communication between the frontend and Google's Gemini Live API.
+FastAPI WebSocket server that relays real-time audio/text communication between the frontend and Google's Gemini API.
+
+**Now powered by LangChain for robust tool calling!**
 
 ## Architecture
 
@@ -14,15 +16,24 @@ Frontend (Next.js) ←→ Backend (FastAPI) ←→ Gemini API
 
 ## Features
 
+- **Dual API Support**: Switch between free API key (Google AI Studio) and paid Vertex AI
 - **Real-time Speech-to-Speech**: Continuous bidirectional audio streaming via `/ws/live`
 - **Text Chat with Tool Calling**: Streaming text responses and tool execution via `/ws/chat`
 - **Short-term Memory**: Thread-based conversation memory with automatic trimming and context management
 - **Thinking Model with Chain of Thought**: AI shows step-by-step reasoning process before answers
-- **Google Classroom Integration**: Built-in tools to access and create Google Classroom assignments and coursework
+- **Google Classroom Integration**: Built-in tools to access and create Google Classroom assignments, coursework, and announcements with form-based selection
 - **Google Docs Creator**: Generate professionally formatted Google Docs with native styles (headings, bold, italic, lists)
 - **Google Sheets Creator**: Create structured Google Sheets with headers and data
-- **Google Forms Creator**: Intelligent form generation with multiple question types (surveys, quizzes, feedback forms)
+- **AI-Powered Google Forms Studio**: Dedicated page for creating and editing Google Forms with AI assistance
+  - Natural language form creation (e.g., "Create a quiz on machine learning with 15 questions")
+  - Split-view interface: Live form preview (left) + AI chat for editing (right)
+  - AI-powered form editing with natural language (e.g., "Add a question about neural networks")
+  - Support for multiple question types: Multiple Choice, Text, Paragraph, Linear Scale
 - **Assignment & Course Creation**: Structured forms for creating classroom content
+- **Student List Management**: Create and manage student lists by department, year, and section
+- **Automated Course Invitations**: Send beautiful HTML email invitations to student lists when creating courses
+- **AI-Powered Description Generator**: Enhance assignment descriptions with AI (50-100 words, preserves meaning)
+- **File Upload for Assignments**: Upload files to Google Drive and attach them to assignments
 - **Native Audio Support**: Uses Gemini 2.5 Flash Native Audio for voice
 - **Dual Modes**: Separate voice and chat modes with independent connections
 - **Flexible CORS**: Environment-configurable for any frontend domain
@@ -31,6 +42,7 @@ Frontend (Next.js) ←→ Backend (FastAPI) ←→ Gemini API
 - **User-Friendly Error Messages**: Converts technical errors into concise, actionable messages for end users
 - **Memory Management API**: REST endpoints for clearing and inspecting conversation memory
 - **Firebase Token Storage**: Secure per-user OAuth token management in Firestore
+- **Cost Optimization**: Choose between free tier and paid API based on your needs
 
 ## Setup
 
@@ -46,29 +58,61 @@ pip install -r requirements.txt
 
 ### 2. Configure Environment
 
-Copy the example environment file:
+The backend supports **two API modes**: Free (Google AI Studio) and Paid (Vertex AI).
+
+#### Option A: Free API Key (Default)
+
+Edit `.env` and set:
 
 ```bash
-cp .env.example .env
-```
-
-Edit `.env` and set your API key:
-
-```bash
+API_KEY_TYPE=free
 GEMINI_API_KEY=your_gemini_api_key_here
 ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 ```
 
 Get your API key from: https://aistudio.google.com/apikey
 
+**Rate Limits:** 15 RPM, 1M TPM, 1,500 requests/day  
+**Cost:** $0 (Free)
+
+
+**Rate Limits:** Much higher (varies by quota)  
+**Cost:** ~$5-10/month for 500 requests/day
+
+📖 **See [API_CONFIGURATION.md](./API_CONFIGURATION.md) for detailed setup instructions**
+
 **Available Environment Variables:**
-- `GEMINI_API_KEY` (required): Your Gemini API key
+- `API_KEY_TYPE` (optional): "free" or "paid" (default: "free")
+- `GEMINI_API_KEY` (required for free): Your Gemini API key from AI Studio
+- `GOOGLE_APPLICATION_CREDENTIALS_JSON` (required for paid): Service account JSON as single-line string
+- `GEMINI_LOCATION` (optional for paid): Vertex AI region (default: "us-central1")
 - `ALLOWED_ORIGINS` (optional): Comma-separated CORS origins
 - `GOOGLE_CLIENT_ID` (optional): For Google Classroom OAuth
 - `GOOGLE_CLIENT_SECRET` (optional): For Google Classroom OAuth
 - `CLASSROOM_DATA_DIR` (optional): Directory containing tokens.json
+- `GMAIL_USER` (required for email invitations): Gmail address for sending course invitations
+- `GMAIL_APP_PASSWORD` (required for email invitations): Gmail App Password (not regular password)
+- `TOKEN_SERVICE_URL` (optional): Firebase backend URL (default: "http://localhost:8001")
 
-### 3. Run the Server
+### 3. Configure Gmail for Course Invitations (Optional)
+
+To enable automated email invitations when creating courses:
+
+1. **Enable 2-Factor Authentication** on your Gmail account
+2. **Generate an App Password**:
+   - Go to https://myaccount.google.com/apppasswords
+   - Select "Mail" and "Other (Custom name)"
+   - Name it "Echo Backend"
+   - Copy the 16-character password
+3. **Add to `.env`**:
+   ```bash
+   GMAIL_USER=your-email@gmail.com
+   GMAIL_APP_PASSWORD=your-16-char-app-password
+   ```
+
+**Note:** Never use your regular Gmail password. Always use an App Password.
+
+### 4. Run the Server
 
 ```bash
 python main.py
@@ -265,6 +309,33 @@ The memory system is automatically integrated into the `/ws/chat` endpoint:
   "thread_id": "thread_user123_session456"
 }
 ```
+
+### REST: `POST /api/generate-description`
+
+AI-powered description generator for assignments. Takes user input and generates a concise, professional 50-100 word description.
+
+**Request:**
+```json
+{
+  "query": "create a lab about python loops"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "description": "Complete a hands-on lab exploring Python loops. You will implement for loops, while loops, and nested iterations to solve practical programming challenges. Focus on loop control, iteration patterns, and efficient algorithm design. Submit your Python code with clear comments explaining your logic. This assignment reinforces fundamental programming concepts essential for data processing and automation tasks.",
+  "word_count": 58
+}
+```
+
+**Features:**
+- Preserves core meaning and intent
+- Professional educational tone
+- Strictly 50-100 words
+- Can enhance existing text or generate from scratch
+- Uses same Gemini model as chat (respects API_KEY_TYPE setting)
 
 ## Code Quality & Security
 

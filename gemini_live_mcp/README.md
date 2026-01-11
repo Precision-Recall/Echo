@@ -36,7 +36,23 @@ Then open: http://localhost:3000
 - **List Coursework**: See assignments for any course
 - **Create Assignments**: AI-guided assignment creation with forms
 - **Create Courses**: Set up new courses with structured forms
+- **Student List Management**: Organize students by department, year, and section
+- **Automated Course Invitations**: Email joining links to student lists
 - **Dynamic Dropdowns**: Automatically populated course selection
+
+### 🎨 AI-Powered Content Creation
+- **Description Generator**: Enhance assignment descriptions with AI (50-100 words)
+- **File Attachments**: Upload files to Google Drive and attach to assignments
+- **Google Forms Studio**: Create and edit Google Forms with AI assistance
+  - AI-powered form generation
+  - Split-screen editing interface
+  - Form history management
+- **Google Slides Generator**: Create professional presentations with AI
+  - AI-generated outlines and content
+  - Flux-powered image generation via Puter.js
+  - Cornflower theme (professional and bold)
+  - Numbered box design pattern (inspired by presentation-ai)
+  - Automatic layout and styling
 
 ### 🛠️ Technical Features
 - **Tool Calling**: AI can invoke tools to perform actions
@@ -80,6 +96,11 @@ gemini_live_mcp/
 - **[AUTH_SETUP.md](./AUTH_SETUP.md)** - Firebase authentication setup
 - **[echo_backend/README.md](./echo_backend/README.md)** - Backend API documentation
 - **[AUTHENTICATION_IMPLEMENTATION.md](./AUTHENTICATION_IMPLEMENTATION.md)** - Auth implementation details
+- **[SLIDES_NEW_TEMPLATE.md](./SLIDES_NEW_TEMPLATE.md)** - **NEW TEMPLATE** based on user reference images
+- **[SLIDES_FEATURE.md](./SLIDES_FEATURE.md)** - Google Slides AI Generator overview
+- **[SLIDES_FINAL_FIXES.md](./SLIDES_FINAL_FIXES.md)** - Previous fixes documentation
+- **[SLIDES_DESIGN_FIXES.md](./SLIDES_DESIGN_FIXES.md)** - Design fixes archive
+- **[SLIDES_EXACT_DESIGN.md](./SLIDES_EXACT_DESIGN.md)** - Technical specifications archive
 
 ## 🔧 Setup
 

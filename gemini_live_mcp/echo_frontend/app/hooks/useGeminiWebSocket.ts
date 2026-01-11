@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 export interface WebSocketMessage {
-  type: 'audio' | 'text' | 'turn_complete' | 'connected' | 'error' | 'pong' | 'text_chunk' | 'tool_start' | 'tool_end' | 'thought' | 'show_assignment_form' | 'show_course_form' | 'auth_success' | 'auth_error';
+  type: 'audio' | 'text' | 'turn_complete' | 'connected' | 'error' | 'pong' | 'text_chunk' | 'tool_start' | 'tool_end' | 'thought' | 'show_assignment_form' | 'show_course_form' | 'show_coursework_form' | 'show_announcements_form' | 'auth_success' | 'auth_error';
   data?: any;
   text?: string;
   thought?: string;
