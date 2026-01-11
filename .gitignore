@@ -15,6 +15,9 @@ node_modules
 # Electron app
 ui/build
 ui/dist
+electron-app/dist/
+electron-app/build/
+electron-app/*.spec
 
 # MCP
 playwright-data

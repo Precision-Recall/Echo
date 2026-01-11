@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from "@/components/ui/button";
-import { Sparkles, MessageSquare, Zap } from "lucide-react";
+import { Sparkles, MessageSquare, Zap, Download } from "lucide-react";
 import Image from "next/image";
 
 export default function LandingPage() {
@@ -71,6 +71,15 @@ export default function LandingPage() {
               className="border-gray-300 text-gray-700 hover:bg-gray-50 px-8 py-6 text-lg rounded-xl"
             >
               Learn More
+            </Button>
+            <Button
+              onClick={() => router.push('/download')}
+              variant="outline"
+              size="lg"
+              className="border-purple-300 text-purple-700 hover:bg-purple-50 px-8 py-6 text-lg rounded-xl"
+            >
+              <Download className="w-5 h-5 mr-2" />
+              Download Desktop
             </Button>
           </div>
 

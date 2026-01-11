@@ -4,12 +4,12 @@
     "windows-mcp": {
       "transport": "streamable_http",
       "url": "http://127.0.0.1:8000/mcp",
-      "enabled": true
+      "enabled": false
     },
     "playwright": {
       "transport": "streamable_http",
       "url": "http://localhost:8931/mcp",
-      "enabled": false
+      "enabled": true
     }
   }
 }

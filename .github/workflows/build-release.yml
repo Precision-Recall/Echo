@@ -1,0 +1,120 @@
+name: Build & Release Echo Desktop
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: false
+        default: 'v1.0.0-dev'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            artifact: 'ECHO Voice Assistant Setup*.exe'
+          - os: ubuntu-latest
+            platform: linux
+            artifact: 'ECHO Voice Assistant*.AppImage'
+          - os: macos-latest
+            platform: mac
+            artifact: 'ECHO Voice Assistant*.dmg'
+
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: electron-app/package-lock.json
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install google-genai langchain langchain-google-genai langchain-mcp-adapters
+          pip install psutil pyaudio python-dotenv rich websockets httpx mcp textual numpy
+
+      - name: Install system dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev libasound2-dev
+
+      - name: Install system dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install portaudio
+
+      - name: Build Python backend with PyInstaller
+        working-directory: electron-app
+        run: python build_backend.py
+
+      - name: Install Electron dependencies
+        working-directory: electron-app
+        run: npm ci
+
+      - name: Build Electron app
+        working-directory: electron-app
+        run: npm run build:electron-only -- --${{ matrix.platform }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List build output
+        working-directory: electron-app/dist
+        run: ls -la
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: echo-${{ matrix.platform }}
+          path: |
+            electron-app/dist/*.exe
+            electron-app/dist/*.AppImage
+            electron-app/dist/*.dmg
+          if-no-files-found: warn
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.AppImage
+            artifacts/**/*.dmg
+          draft: true
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

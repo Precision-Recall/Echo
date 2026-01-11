@@ -56,26 +56,52 @@ function createWindow() {
   });
 }
 
-// Start Python Backend using uv (respects project venv)
+// Start Python Backend - supports both bundled (production) and dev mode
 function startPythonBackend() {
   const projectRoot = path.join(__dirname, '..');
-  const pythonScript = path.join(__dirname, 'backend', 'electron_bridge.py');
 
-  console.log('[Python] Starting backend from:', pythonScript);
-  console.log('[Python] Project root:', projectRoot);
+  let backendExecutable;
+  let backendArgs = [];
+  let backendCwd = __dirname;
 
-  try {
-    // Use direct venv python to avoid 'uv run' locking issues when main.py is also running
-    // Venv path: ../.venv/Scripts/python.exe (Windows)
+  // Check if we're running in production (bundled) or development
+  const isDev = !app.isPackaged;
+
+  if (isDev) {
+    // Development mode: Use venv Python
+    const pythonScript = path.join(__dirname, 'backend', 'electron_bridge.py');
     const venvPython = path.join(projectRoot, '.venv', 'Scripts', 'python.exe');
 
-    console.log('[Python] Using python executable:', venvPython);
+    console.log('[Python] DEV MODE - Using venv');
+    console.log('[Python] Script:', pythonScript);
 
-    pythonProcess = spawn(venvPython, [pythonScript], {
-      cwd: __dirname,
+    backendExecutable = venvPython;
+    backendArgs = [pythonScript];
+    backendCwd = projectRoot;
+  } else {
+    // Production mode: Use bundled PyInstaller executable
+    const bundledBackend = path.join(process.resourcesPath, 'backend',
+      process.platform === 'win32' ? 'echo_backend.exe' : 'echo_backend');
+
+    console.log('[Python] PRODUCTION MODE - Using bundled backend');
+    console.log('[Python] Executable:', bundledBackend);
+
+    if (!fs.existsSync(bundledBackend)) {
+      console.error('[Python] ERROR: Bundled backend not found at:', bundledBackend);
+      return;
+    }
+
+    backendExecutable = bundledBackend;
+    backendArgs = [];
+    backendCwd = path.dirname(bundledBackend);
+  }
+
+  try {
+    pythonProcess = spawn(backendExecutable, backendArgs, {
+      cwd: backendCwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
-      shell: true
+      shell: process.platform === 'win32'
     });
 
     pythonProcess.stdout.on('data', (data) => {
@@ -290,6 +316,23 @@ ipcMain.handle('set-api-key', async (event, newKey) => {
 
     // Update environment variable for current process
     process.env.GEMINI_API_KEY = newKey;
+
+    // RESTART Backend to apply new key
+    console.log('[Settings] Restarting backend with new key...');
+    if (pythonProcess) {
+      // Kill existing
+      if (process.platform === 'win32') {
+        const { exec } = require('child_process');
+        exec(`taskkill /pid ${pythonProcess.pid} /T /F`);
+      } else {
+        pythonProcess.kill('SIGKILL');
+      }
+      pythonProcess = null;
+    }
+
+    // Start new with updated env
+    backendReady = false;
+    startPythonBackend();
 
     return { success: true };
   } catch (err) {
