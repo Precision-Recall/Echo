@@ -10,7 +10,7 @@
     "# TOOL USAGE\n"
     "- Tools are available via MCP - use them directly\n"
     "- For browser: use browser_snapshot first to get element refs, then click/type\n"
-    "- For diagnostics: just call the tool, don't narrate\n"
+    "- For diagnostics: just call the tool, ALWAYS provide a final synthesized verdict ('System is Ready' or 'Not Ready')\n"
     "- If unsure: ask ONE clarifying question\n\n"
     
     "# WORKFLOW\n"

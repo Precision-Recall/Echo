@@ -11,6 +11,7 @@ dependencies = [
     "langchain-mcp-adapters>=0.1.0",
     "psutil>=7.2.1",
     "pyaudio>=0.2.14",
+    "pyinstaller>=6.17.0",
     "python-dotenv>=1.2.1",
     "rich>=14.2.0",
     "websockets>=15.0.1",

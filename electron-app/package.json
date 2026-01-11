@@ -10,11 +10,17 @@
     },
     "devDependencies": {
         "electron": "^28.0.0",
-        "electron-builder": "^23.6.0"
+        "electron-builder": "^24.9.1"
     },
     "scripts": {
         "start": "electron .",
-        "build": "electron-builder --win portable"
+        "prebuild:backend": "python build_backend.py",
+        "build": "npm run prebuild:backend && electron-builder --win --x64",
+        "build:win": "npm run prebuild:backend && electron-builder --win --x64",
+        "build:linux": "npm run prebuild:backend && electron-builder --linux --x64",
+        "build:mac": "npm run prebuild:backend && electron-builder --mac --x64",
+        "build:all": "npm run prebuild:backend && electron-builder --win --linux --mac",
+        "build:electron-only": "electron-builder --win --x64"
     },
     "build": {
         "extends": null,
@@ -24,10 +30,58 @@
             "electron-main.js",
             "preload.js",
             "ui/**/*",
-            "backend/**/*"
+            "!backend/**/*",
+            "!build_backend.py"
+        ],
+        "extraResources": [
+            {
+                "from": "dist/backend",
+                "to": "backend",
+                "filter": [
+                    "**/*"
+                ]
+            }
         ],
         "win": {
-            "target": "portable"
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                },
+                {
+                    "target": "portable",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "icon": "ui/icon.ico"
+        },
+        "linux": {
+            "target": [
+                {
+                    "target": "AppImage",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "icon": "ui/icon.png",
+            "category": "Utility"
+        },
+        "mac": {
+            "target": [
+                {
+                    "target": "dmg",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "icon": "ui/icon.icns",
+            "category": "public.app-category.utilities"
         },
         "directories": {
             "output": "dist"

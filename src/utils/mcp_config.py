@@ -30,9 +30,15 @@ class MCPConfigManager:
             "enable_diagnostic_tools": True,
             "mcp_servers": {
                 "windows-mcp": {
-                    "transport": "streamable_http",
-                    "url": "http://127.0.0.1:8000/mcp",
+                    "transport": "stdio",
+                    "command": "python",
+                    "args": ["-m", "windows_mcp"],
                     "enabled": True
+                },
+                "playwright": {
+                    "transport": "streamable_http",
+                    "url": "http://localhost:8931/mcp",
+                    "enabled": False
                 }
             }
         }
