@@ -22,7 +22,7 @@ class ExecutorAgent:
         self,
         mcp_client: MultiServerMCPClient,
         logger: ThinkingLogger,
-        default_timeout: float = 15.0
+        default_timeout: float = 30.0  # GUI automation needs longer timeout
     ):
         self.mcp_client = mcp_client
         self.logger = logger

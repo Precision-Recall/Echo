@@ -30,6 +30,13 @@ Available tools:
 - Shortcut-Tool: Press keyboard shortcut (shortcut: string like "ctrl+c")
 - Wait-Tool: Wait for duration (duration: float in seconds)
 
+Timeout guidelines (in seconds):
+- App-Tool: 30 (GUI apps take time to launch)
+- Powershell-Tool: 45 (commands may take time)
+- Click/Type/Scroll/Shortcut: 10 (quick operations)
+- State-Tool: 15 (screen capture)
+- Wait-Tool: duration + 5
+
 Output a JSON execution plan with this structure:
 {
   "user_intent": "Brief description of what user wants",
@@ -40,7 +47,7 @@ Output a JSON execution plan with this structure:
       "parameters": {"mode": "launch", "name": "Notepad"},
       "description": "Launch Notepad application",
       "depends_on": [],
-      "timeout_seconds": 10
+      "timeout_seconds": 30
     }
   ],
   "requires_confirmation": false
@@ -52,6 +59,10 @@ Rules:
 3. Break complex tasks into atomic steps
 4. Each step should have clear dependencies
 5. Set requires_confirmation=true for destructive actions
+6. PREFER Powershell-Tool over App-Tool when possible (faster, more reliable)
+7. HANDLE MIXED LANGUAGE: If input contains foreign characters (e.g. Hindi, Chinese) alongside an app name (like 'YouTube', 'Chrome'), assume the user wants to SEARCH or OPEN specific content. Do NOT just open the app.
+   - Example: "αñ▓αñ░ αñçαñ¿ YouTube" -> Launch Chrome -> Search YouTube for the phonetic string or closest guess.
+   - If exact intent is unclear but platform is known, Open App -> Focus Search Bar -> Type the raw input.
 
 ONLY output valid JSON. No explanation or markdown."""
 

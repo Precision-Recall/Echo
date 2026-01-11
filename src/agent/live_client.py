@@ -79,6 +79,10 @@ class GeminiLiveClient:
         self._session = None  # Store session reference for speaking responses
         self._muted = False   # Mute Voice Agent during SubAgent execution
         
+        # Cache for tools to avoid multiple MCP connections
+        self._langchain_tools_cache = None
+        self._genai_tools_cache = None
+        
     async def run(self):
         """Main loop: Connect -> Audio/Tool Loop"""
         print("[DEBUG] GeminiLiveClient.run() started", flush=True)
@@ -183,21 +187,47 @@ class GeminiLiveClient:
         # Handle case where MCP client is not available
         if not self.mcp_client:
             return []
-        langchain_tools = await self.mcp_client.get_tools()
+        
+        # Return cached tools if available
+        if self._genai_tools_cache is not None:
+            return self._genai_tools_cache
+        
+        # Get and cache langchain tools
+        if self._langchain_tools_cache is None:
+            self._langchain_tools_cache = await self.mcp_client.get_tools()
+        langchain_tools = self._langchain_tools_cache
         declarations = []
+        
+        # Fields not supported by GenAI FunctionDeclaration
+        unsupported_fields = {
+            "title", "definitions", "$schema", "$defs",
+            "additionalProperties", "additional_properties",
+            "default", "examples", "format"
+        }
+        
+        def clean_schema(obj):
+            """Recursively remove unsupported fields from schema"""
+            if isinstance(obj, dict):
+                # Create a new dict without unsupported fields
+                cleaned = {}
+                for key, value in obj.items():
+                    if key not in unsupported_fields:
+                        cleaned[key] = clean_schema(value)
+                return cleaned
+            elif isinstance(obj, list):
+                return [clean_schema(item) for item in obj]
+            else:
+                return obj
         
         for t in langchain_tools:
             # Handle Schema
             schema = {}
             if hasattr(t, 'args_schema') and t.args_schema:
                 if hasattr(t.args_schema, 'schema'):
-                    schema = t.args_schema.schema()
+                    raw_schema = t.args_schema.schema()
+                    schema = clean_schema(raw_schema)
                 elif isinstance(t.args_schema, dict):
-                    schema = t.args_schema
-            
-            # Remove title/definitions if present (not supported by GenAI)
-            if "title" in schema: del schema["title"]
-            if "definitions" in schema: del schema["definitions"]
+                    schema = clean_schema(t.args_schema)
             
             declarations.append(FunctionDeclaration(
                 name=t.name,
@@ -209,7 +239,9 @@ class GeminiLiveClient:
         if DIAGNOSTIC_TOOLS_AVAILABLE:
             declarations.extend(self._get_diagnostic_tool_declarations())
         
-        return [Tool(function_declarations=declarations)]
+        # Cache and return
+        self._genai_tools_cache = [Tool(function_declarations=declarations)]
+        return self._genai_tools_cache
     
     def _get_diagnostic_tool_declarations(self) -> List[FunctionDeclaration]:
         """Get declarations for granular diagnostic tools from MCP_TOOL_DEFINITIONS"""
@@ -269,7 +301,10 @@ class GeminiLiveClient:
         except Exception as e:
             # Graceful handling for WebSocket disconnection
             err_str = str(e).lower()
-            if "close" in err_str or "aborted" in err_str or "1007" in err_str or "1011" in err_str:
+            if "policy violation" in err_str or "1008" in err_str:
+                self.logger.log_error(f"⚠️ Gemini Policy Violation (1008): {e}")
+                self.logger.log_thought(f"⚠️ Connection closed due to policy violation (1008)")
+            elif "close" in err_str or "aborted" in err_str or "1007" in err_str or "1011" in err_str:
                 self.logger.log_thought("🔌 Session disconnected")
             else:
                 self.logger.log_error(f"Send Audio Error: {e}")
@@ -565,6 +600,14 @@ class GeminiLiveClient:
         # Escalate to multi-agent graph
         self.logger.log_thought(f"🔀 Escalating to multi-agent: {transcript[:50]}...")
         
+        # Run in background to avoid blocking the receive loop (which causes timeouts)
+        asyncio.create_task(self._run_graph_in_background(session, transcript))
+        
+        self.task_router.reset_failure_count()
+        return True
+
+    async def _run_graph_in_background(self, session, transcript):
+        """Run multi-agent graph without blocking the main loop"""
         try:
             # Run through planner + executor
             response = await self.multi_agent_graph.run_for_voice(transcript)
@@ -572,13 +615,12 @@ class GeminiLiveClient:
             # Speak the response back to user
             await self._speak_response(session, response)
             
-            self.task_router.reset_failure_count()
-            return True
-            
         except Exception as e:
             self.logger.log_error(f"Multi-agent error: {e}")
-            # Could potentially retry or fall back
-            return False
+            try:
+                await self._speak_response(session, "Sorry, I encountered an error completing that task.")
+            except:
+                pass
     
     async def _speak_response(self, session, text: str):
         """Send text to Gemini Live to speak back to user."""

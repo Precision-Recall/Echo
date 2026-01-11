@@ -12,28 +12,14 @@
 
 <body>
     <div class="app" id="app">
-        <!-- Chain of Thought Panel (when expanded) -->
-        <!-- Split Container (when expanded) -->
-        <div class="split-container" id="cotPanel">
-            <!-- Left Panel: Conversation & Thinking -->
-            <div class="panel left-panel">
-                <div class="panel-header">
-                    <span class="panel-title">Thinking & Response</span>
-                    <span class="cot-status" id="cotStatus">Idle</span>
-                </div>
-                <div class="panel-content" id="mainContent">
-                    <!-- Conversation logs -->
-                </div>
+        <!-- Chain of Thought Timeline Panel (when expanded) -->
+        <div class="cot-container" id="cotPanel">
+            <div class="cot-header">
+                <span class="cot-title">Chain of Thought</span>
+                <span class="cot-status" id="cotStatus">Idle</span>
             </div>
-
-            <!-- Right Panel: Tools & Debug Logs -->
-            <div class="panel right-panel">
-                <div class="panel-header">
-                    <span class="panel-title">Tools & Logs</span>
-                </div>
-                <div class="panel-content" id="logContent">
-                    <!-- Technical logs -->
-                </div>
+            <div class="cot-timeline" id="cotTimeline">
+                <!-- Steps will be dynamically added here -->
             </div>
         </div>
 
@@ -51,7 +37,20 @@
             </div>
 
             <!-- Mode Toggle -->
-            <button class="mode-btn" id="modeBtn" title="Toggle Reasoning Mode">⚡</button>
+            <button class="mode-btn" id="modeBtn" title="Toggle Reasoning Mode">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                </svg>
+            </button>
+
+            <!-- Settings Button -->
+            <button class="settings-btn" id="settingsBtn" title="Settings">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3" />
+                    <path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+            </button>
 
             <!-- Hotkey Badge -->
             <div class="hotkey">ALT+SPACE</div>
@@ -62,6 +61,93 @@
                     <polyline id="expandIcon" points="6 9 12 15 18 9"></polyline>
                 </svg>
             </button>
+        </div>
+
+        <!-- Settings Modal -->
+        <div class="settings-modal" id="settingsModal">
+            <div class="settings-overlay" id="settingsOverlay"></div>
+            <div class="settings-panel">
+                <div class="settings-header">
+                    <h2>Settings</h2>
+                    <button class="settings-close" id="settingsClose">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="settings-content">
+                    <div class="settings-group">
+                        <label for="apiKeyInput">Gemini API Key</label>
+                        <div class="api-key-input-wrapper">
+                            <input type="password" id="apiKeyInput" placeholder="AIza..." autocomplete="off">
+                            <button class="toggle-visibility" id="toggleKeyVisibility" title="Show/Hide">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                    <circle cx="12" cy="12" r="3" />
+                                </svg>
+                            </button>
+                        </div>
+                        <p class="settings-hint">Get your API key from <a href="#" id="googleAILink">Google AI
+                                Studio</a></p>
+                    </div>
+
+                    <!-- MCP Settings Section -->
+                    <div class="settings-group mcp-section">
+                        <div class="setting-row">
+                            <label>Diagnostic Tools</label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="diagnosticToolsToggle" checked>
+                                <span class="slider round"></span>
+                            </label>
+                        </div>
+                        <p class="settings-hint">Enable built-in system diagnosis tools.</p>
+
+                        <div class="mcp-header-row">
+                            <label>MCP Servers</label>
+                            <button class="add-mcp-btn" id="addMcpServerBtn" title="Add Server">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div class="mcp-server-list" id="mcpServerList">
+                            <!-- Items populated by JS -->
+                        </div>
+
+                        <!-- Add Server Form (Hidden by default) -->
+                        <div class="add-mcp-form" id="addMcpForm" style="display: none;">
+                            <input type="text" id="mcpName" placeholder="Server Name (e.g. playwright)"
+                                class="mcp-input">
+
+                            <select id="mcpTransport" class="mcp-input">
+                                <option value="stdio">Transport: Stdio (Command)</option>
+                                <option value="http">Transport: HTTP (SSE)</option>
+                            </select>
+
+                            <input type="text" id="mcpCommandUrl" placeholder="Command (e.g. npx -y ...)"
+                                class="mcp-input">
+                            <input type="text" id="mcpArgs" placeholder="Args (e.g. -y @modelcontextprotocol/...)"
+                                class="mcp-input" style="display: block;">
+
+                            <div class="mcp-form-actions">
+                                <button class="btn-cancel" id="cancelAddMcp">Cancel</button>
+                                <button class="btn-add" id="confirmAddMcp">Add</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-status" id="settingsStatus"></div>
+                </div>
+                <div class="settings-footer">
+                    <button class="settings-cancel" id="settingsCancel">Cancel</button>
+                    <button class="settings-save" id="settingsSave">Save</button>
+                </div>
+            </div>
         </div>
     </div>
 
