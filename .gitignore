@@ -11,3 +11,10 @@ wheels/
 agent_trace.json
 node_modules
 *.log
+
+# Electron app
+ui/build
+ui/dist
+
+# MCP
+playwright-data

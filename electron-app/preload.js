@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, shell } = require('electron');
 
 // Expose IPC methods to renderer process
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -9,6 +9,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resizeWindow: (size) => ipcRenderer.send('resize-window', size),
     setHotkey: (hotkey) => ipcRenderer.send('set-hotkey', hotkey),
     setMode: (mode) => ipcRenderer.send('set-mode', mode),
+
+    // Settings
+    getApiKey: () => ipcRenderer.invoke('get-api-key'),
+    setApiKey: (key) => ipcRenderer.invoke('set-api-key', key),
+    openExternal: (url) => ipcRenderer.send('open-external', url),
+
+    // MCP Configuration
+    getMcpConfig: () => ipcRenderer.send('get-mcp-config'),
+    saveMcpConfig: (config) => ipcRenderer.send('save-mcp-config', config),
 
     // Event listeners
     onSessionConnecting: (callback) => ipcRenderer.on('session-connecting', callback),

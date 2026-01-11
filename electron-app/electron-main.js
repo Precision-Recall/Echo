@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, screen, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
 
 let mainWindow;
@@ -229,6 +230,92 @@ ipcMain.on('set-mode', (event, mode) => {
   console.log('[IPC] Set mode:', mode);
   if (pythonProcess && !pythonProcess.killed && pythonProcess.stdin) {
     pythonProcess.stdin.write(`MODE:${mode}\n`);
+  }
+});
+
+// Settings IPC Handlers
+const projectRoot = path.join(__dirname, '..');
+const envPath = path.join(projectRoot, '.env');
+
+// Get API key (returns masked version for display)
+ipcMain.handle('get-api-key', async () => {
+  try {
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf8');
+      const match = content.match(/GEMINI_API_KEY\s*=\s*(.+)/);
+      if (match && match[1]) {
+        const key = match[1].trim();
+        // Return masked key for display (show first 8 and last 4 chars)
+        if (key.length > 12) {
+          return {
+            exists: true,
+            masked: key.substring(0, 8) + '...' + key.substring(key.length - 4),
+            key: key  // Full key for editing
+          };
+        }
+        return { exists: true, masked: key, key: key };
+      }
+    }
+    return { exists: false, masked: '', key: '' };
+  } catch (err) {
+    console.error('[Settings] Error reading API key:', err);
+    return { exists: false, masked: '', key: '', error: err.message };
+  }
+});
+
+// Set API key (writes to .env)
+ipcMain.handle('set-api-key', async (event, newKey) => {
+  try {
+    let content = '';
+
+    // Read existing .env if it exists
+    if (fs.existsSync(envPath)) {
+      content = fs.readFileSync(envPath, 'utf8');
+    }
+
+    // Update or add GEMINI_API_KEY
+    if (content.match(/GEMINI_API_KEY\s*=/)) {
+      // Replace existing key
+      content = content.replace(/GEMINI_API_KEY\s*=.*/g, `GEMINI_API_KEY=${newKey}`);
+    } else {
+      // Add new key
+      if (content && !content.endsWith('\n')) {
+        content += '\n';
+      }
+      content += `GEMINI_API_KEY=${newKey}\n`;
+    }
+
+    fs.writeFileSync(envPath, content, 'utf8');
+    console.log('[Settings] API key saved to .env');
+
+    // Update environment variable for current process
+    process.env.GEMINI_API_KEY = newKey;
+
+    return { success: true };
+  } catch (err) {
+    console.error('[Settings] Error saving API key:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+// Open external URL in default browser
+ipcMain.on('open-external', (event, url) => {
+  shell.openExternal(url);
+});
+
+// MCP Configuration Handlers
+ipcMain.on('get-mcp-config', () => {
+  console.log('[IPC] Get MCP Config');
+  if (pythonProcess && !pythonProcess.killed && pythonProcess.stdin) {
+    pythonProcess.stdin.write('GET_CONFIG\n');
+  }
+});
+
+ipcMain.on('save-mcp-config', (event, config) => {
+  console.log('[IPC] Save MCP Config');
+  if (pythonProcess && !pythonProcess.killed && pythonProcess.stdin) {
+    const payload = JSON.stringify(config);
+    pythonProcess.stdin.write(`SAVE_CONFIG ${payload}\n`);
   }
 });
 

@@ -41,7 +41,8 @@ class DesktopAgent:
         gemini_api_key: str,
         thinking_logger: ThinkingLogger,
         mcp_url: str = "http://localhost:8000/mcp",
-        mode: AgentMode = AgentMode.FAST
+        mode: AgentMode = AgentMode.FAST,
+        mcp_config: Dict[str, Any] = None
     ):
         """
         Initialize agent
@@ -49,13 +50,14 @@ class DesktopAgent:
         Args:
             gemini_api_key: Google Gemini API key
             thinking_logger: Logger for thinking trace
-            mcp_url: Windows-MCP server URL
+            mcp_url: Windows-MCP server URL (Legacy)
             mode: Agent execution mode (FAST, REASONING, VOICE)
+            mcp_config: Standard MCP configuration dict
         """
         self.logger = thinking_logger
         self.gemini_api_key = gemini_api_key
         self.mcp_url = mcp_url
-        self.mcp_url = mcp_url
+        self.mcp_config = mcp_config
         self.config = ModelConfig.get_config(mode)
         self.current_mode = mode
         
@@ -66,15 +68,48 @@ class DesktopAgent:
     async def initialize(self):
         """Initialize MCP client and LangGraph agent"""
         try:
-            self.logger.log_thought("Connecting to Windows-MCP server...")
+            self.logger.log_thought("Connecting to MCP servers...")
             
-            # Connect to Windows-MCP via HTTP
-            self.mcp_client = MultiServerMCPClient({
-                "windows-mcp": {
-                    "transport": "http",
-                    "url": self.mcp_url,
-                }
-            })
+            # Use provided config or fallback to default
+            if self.mcp_config and "mcp_servers" in self.mcp_config:
+                # Need to convert internal storage format to LangChain MCP format
+                # But wait, electron_bridge passes the raw storage config
+                from src.utils.mcp_config import MCPConfigManager
+                # Extract valid servers
+                manager = MCPConfigManager() # Temp manager to use helper? 
+                # Actually, better to just modify config here if needed, 
+                # but electron_bridge passes the raw json.
+                # We need to filter for enabled servers.
+                
+                # RE-READ config using manager to get clean format
+                # Or implemented helper in DesktopAgent?
+                # Best approach: Use the passed dict directly if it matches format
+                
+                # The mcp_config structure from JSON:
+                # { "mcp_servers": { "name": { "transport": "...", "enabled": true } } }
+                
+                # MultiServerMCPClient expects:
+                # { "name": { "transport": "...", "url": "..." } }
+                
+                # We interpret the passed config:
+                server_config = {}
+                servers = self.mcp_config.get("mcp_servers", {})
+                for name, details in servers.items():
+                    if details.get("enabled", True):
+                        # Filter to only known client params
+                        client_params = {k:v for k,v in details.items() if k in ["transport", "url", "command", "args", "env"]}
+                        server_config[name] = client_params
+                
+                self.mcp_client = MultiServerMCPClient(server_config)
+                
+            else:
+                # Legacy fallback
+                self.mcp_client = MultiServerMCPClient({
+                    "windows-mcp": {
+                        "transport": "http",
+                        "url": self.mcp_url,
+                    }
+                })
             
             # Get all available tools from Windows-MCP
             tools = await self.mcp_client.get_tools()

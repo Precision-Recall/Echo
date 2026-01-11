@@ -26,10 +26,71 @@ sys.path.insert(0, project_root)
 os.chdir(project_root)  # Critical for PromptLoader
 
 from dotenv import load_dotenv
-load_dotenv(os.path.join(project_root, '.env'))
+
+def load_api_key_with_fallback(project_root: str) -> str:
+    """
+    Load Gemini API key with multiple fallback mechanisms.
+    
+    Priority order:
+    1. Environment variable (already set)
+    2. .env in project root
+    3. .env in current directory
+    4. .env in user home directory
+    5. GOOGLE_API_KEY as alias
+    
+    Returns:
+        API key string or None if not found
+    """
+    # Check if already set in environment (e.g., from system env vars)
+    api_key = os.getenv('GEMINI_API_KEY')
+    if api_key:
+        return api_key
+    
+    # Define potential .env file locations
+    env_locations = [
+        os.path.join(project_root, '.env'),                          # Project root
+        os.path.join(os.path.dirname(project_root), '.env'),         # Parent dir
+        os.path.join(os.getcwd(), '.env'),                           # Current working dir
+        os.path.join(os.path.expanduser('~'), '.env'),               # User home
+        os.path.join(os.path.expanduser('~'), '.gemini', '.env'),    # ~/.gemini/.env
+        os.path.join(os.getenv('APPDATA', ''), 'Echo', '.env'),      # Windows AppData
+    ]
+    
+    # Try loading from each location
+    for env_path in env_locations:
+        if env_path and os.path.exists(env_path):
+            load_dotenv(env_path)
+            api_key = os.getenv('GEMINI_API_KEY')
+            if api_key:
+                print(f"[ENV] Loaded API key from: {env_path}", flush=True)
+                return api_key
+    
+    # Fallback: Check for GOOGLE_API_KEY alias
+    api_key = os.getenv('GOOGLE_API_KEY')
+    if api_key:
+        print("[ENV] Using GOOGLE_API_KEY as fallback", flush=True)
+        os.environ['GEMINI_API_KEY'] = api_key  # Set for consistency
+        return api_key
+    
+    # Fallback: Check for numbered backup keys (GEMINI_API_KEY_1, _2, etc.)
+    for i in range(1, 5):
+        backup_key = os.getenv(f'GEMINI_API_KEY_{i}')
+        if backup_key:
+            print(f"[ENV] Using GEMINI_API_KEY_{i} as fallback", flush=True)
+            os.environ['GEMINI_API_KEY'] = backup_key
+            return backup_key
+    
+    return None
+
+# Load API key with fallback
+GEMINI_API_KEY = load_api_key_with_fallback(project_root)
 
 # 2. Key Code Imports
 from src.agent import DesktopAgent, ThinkingLogger, AgentMode
+from src.utils.mcp_config import MCPConfigManager
+import json
+from src.utils.mcp_config import MCPConfigManager
+import json
 
 class ElectronLogger(ThinkingLogger):
     """Logger that outputs to stdout for Electron to capture"""
@@ -64,13 +125,15 @@ class BridgeSession:
     
     def __init__(self):
         self.logger = ElectronLogger()
-        self.api_key = os.getenv('GEMINI_API_KEY')
+        self.api_key = GEMINI_API_KEY  # Use pre-loaded key with fallback
         self.agent = None
         self.running = False
         self.session_task = None
+        self.config_manager = MCPConfigManager(project_root)
         
         if not self.api_key:
-            self.logger.log_error("❌ GEMINI_API_KEY not set")
+            self.logger.log_error("❌ GEMINI_API_KEY not found in any location")
+            self.logger.log_error("   Checked: .env (project/home), GOOGLE_API_KEY, system env")
 
     async def initialize(self):
         """Initialize Agent and MCP Connection"""
@@ -78,10 +141,14 @@ class BridgeSession:
             self.logger.log_thought("⚙️ Initializing Agent...")
             
             # Create Agent instance
+            # Create Agent instance with dynamic config
+            config = self.config_manager.load_config()
+            
             self.agent = DesktopAgent(
                 gemini_api_key=self.api_key,
                 thinking_logger=self.logger,
-                mode=AgentMode.FAST  # Default to FAST, UI toggle can switch to REASONING
+                mode=AgentMode.FAST,
+                mcp_config=config  # Pass loaded config
             )
             
             # This connects to MCP (matches main.py logic)
@@ -151,6 +218,22 @@ async def stdin_reader(bridge):
             elif cmd == 'QUIT':
                 await bridge.stop()
                 break
+            elif cmd == 'GET_CONFIG':
+                try:
+                    config = bridge.config_manager.load_config()
+                    print(f"[CONFIG] {json.dumps(config)}", flush=True)
+                except Exception as e:
+                    print(f"[ERROR] Failed to get config: {e}", flush=True)
+            elif cmd.startswith('SAVE_CONFIG '):
+                try:
+                    payload = line.strip()[12:] # Remove SAVE_CONFIG prefix
+                    config = json.loads(payload)
+                    bridge.config_manager.save_config(config)
+                    # Force reload on next session
+                    bridge.agent = None 
+                    print("[CONFIG] Saved", flush=True)
+                except Exception as e:
+                    print(f"[ERROR] Failed to save config: {e}", flush=True)
                 
         except Exception as e:
             print(f"[ERROR] Loop: {e}", flush=True)

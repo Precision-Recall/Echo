@@ -610,8 +610,381 @@ def find_large_files(directory: str, min_size_mb: int = 100, max_depth: int = 3)
             "total_size_gb": round(sum(f['size_mb'] for f in large_files) / 1024, 2),
             "files": large_files[:20]  # Top 20
         }, indent=2)
+
     except Exception as e:
         return json.dumps({"error": str(e), "files_found": 0})
+
+
+# ============================================================================
+# HARDWARE & SYSTEM INFO TOOLS
+# ============================================================================
+
+def get_system_info() -> str:
+    """
+    Get comprehensive system information
+    
+    Returns:
+    - os_name: Windows version
+    - os_build: Build number
+    - computer_name: PC name
+    - processor: CPU model
+    - ram_gb: Total RAM
+    - architecture: 32/64-bit
+    - uptime_hours: System uptime
+    
+    Use when: User asks "what's my system", "PC specs", "system info"
+    """
+    import platform
+    import os
+    
+    try:
+        # Get Windows version details
+        result = subprocess.run(
+            ["powershell", "-Command",
+             "(Get-CimInstance Win32_OperatingSystem).Caption"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        os_name = result.stdout.strip() if result.returncode == 0 else platform.system()
+        
+        # Get processor info
+        result = subprocess.run(
+            ["powershell", "-Command",
+             "(Get-CimInstance Win32_Processor).Name"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        processor = result.stdout.strip() if result.returncode == 0 else platform.processor()
+        
+        # Get uptime
+        uptime_seconds = psutil.boot_time()
+        import time
+        uptime_hours = round((time.time() - uptime_seconds) / 3600, 1)
+        
+        return json.dumps({
+            "os_name": os_name,
+            "os_version": platform.version(),
+            "os_build": platform.win32_ver()[1] if hasattr(platform, 'win32_ver') else None,
+            "computer_name": platform.node(),
+            "processor": processor,
+            "architecture": platform.machine(),
+            "ram_gb": round(psutil.virtual_memory().total / 1024 / 1024 / 1024, 1),
+            "cpu_cores": psutil.cpu_count(logical=False),
+            "cpu_threads": psutil.cpu_count(logical=True),
+            "uptime_hours": uptime_hours
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def get_gpu_usage() -> str:
+    """
+    Get GPU information and usage (supports NVIDIA and integrated graphics)
+    
+    Returns:
+    - gpus: List of GPUs with name, memory, utilization
+    
+    Use when: User asks about GPU, graphics card, video memory
+    """
+    gpus = []
+    
+    # Try nvidia-smi for NVIDIA GPUs
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().split('\n'):
+                parts = [p.strip() for p in line.split(',')]
+                if len(parts) >= 6:
+                    gpus.append({
+                        "name": parts[0],
+                        "type": "nvidia",
+                        "memory_total_mb": int(parts[1]),
+                        "memory_used_mb": int(parts[2]),
+                        "memory_free_mb": int(parts[3]),
+                        "utilization_percent": int(parts[4]),
+                        "temperature_c": int(parts[5])
+                    })
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    
+    # Fallback: Get GPU info via WMI
+    if not gpus:
+        try:
+            result = subprocess.run(
+                ["powershell", "-Command",
+                 "Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM, DriverVersion | ConvertTo-Json"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                gpu_data = json.loads(result.stdout)
+                if not isinstance(gpu_data, list):
+                    gpu_data = [gpu_data]
+                
+                for gpu in gpu_data:
+                    adapter_ram = gpu.get("AdapterRAM", 0)
+                    gpus.append({
+                        "name": gpu.get("Name", "Unknown"),
+                        "type": "integrated" if "Intel" in gpu.get("Name", "") or "AMD" in gpu.get("Name", "") else "dedicated",
+                        "memory_mb": round(adapter_ram / 1024 / 1024) if adapter_ram else "Unknown",
+                        "driver_version": gpu.get("DriverVersion", "Unknown")
+                    })
+        except Exception:
+            pass
+    
+    return json.dumps({
+        "gpu_count": len(gpus),
+        "gpus": gpus,
+        "nvidia_available": any(g.get("type") == "nvidia" for g in gpus)
+    }, indent=2)
+
+
+def get_screen_info() -> str:
+    """
+    Get display/monitor information
+    
+    Returns:
+    - monitors: List of connected displays
+    - primary: Primary display info
+    
+    Use when: User asks about screen, resolution, display settings, monitors
+    """
+    try:
+        result = subprocess.run(
+            ["powershell", "-Command",
+             "Get-CimInstance Win32_VideoController | "
+             "Select-Object VideoModeDescription, CurrentRefreshRate | ConvertTo-Json"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        monitors = []
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            if not isinstance(data, list):
+                data = [data]
+            
+            for i, mon in enumerate(data):
+                mode = mon.get("VideoModeDescription", "")
+                monitors.append({
+                    "index": i + 1,
+                    "resolution": mode.split(" x ")[0] + " x " + mode.split(" x ")[1].split(" ")[0] if " x " in mode else mode,
+                    "refresh_rate": mon.get("CurrentRefreshRate", "Unknown")
+                })
+        
+        # Get more detailed monitor info
+        result2 = subprocess.run(
+            ["powershell", "-Command",
+             "Get-CimInstance -Namespace root\\wmi -Class WmiMonitorBasicDisplayParams -ErrorAction SilentlyContinue | "
+             "Select-Object InstanceName, MaxHorizontalImageSize, MaxVerticalImageSize | ConvertTo-Json"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if result2.returncode == 0 and result2.stdout.strip():
+            try:
+                sizes = json.loads(result2.stdout)
+                if not isinstance(sizes, list):
+                    sizes = [sizes]
+                
+                for i, size in enumerate(sizes):
+                    if i < len(monitors):
+                        h = size.get("MaxHorizontalImageSize", 0)
+                        v = size.get("MaxVerticalImageSize", 0)
+                        if h and v:
+                            import math
+                            diagonal = round(math.sqrt(h*h + v*v) / 2.54, 1)
+                            monitors[i]["size_inches"] = diagonal
+            except:
+                pass
+        
+        return json.dumps({
+            "monitor_count": len(monitors),
+            "monitors": monitors
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ============================================================================
+# TROUBLESHOOTING TOOLS
+# ============================================================================
+
+def get_recent_errors() -> str:
+    """
+    Get recent Windows Event Log errors (last 24 hours)
+    
+    Returns:
+    - errors: List of recent error events
+    - count: Number of errors found
+    
+    Use when: User reports issues, crashes, or wants to see system errors
+    """
+    try:
+        result = subprocess.run(
+            ["powershell", "-Command",
+             "$yesterday = (Get-Date).AddDays(-1); "
+             "Get-WinEvent -FilterHashtable @{LogName='System','Application'; Level=2; StartTime=$yesterday} -MaxEvents 20 -ErrorAction SilentlyContinue | "
+             "Select-Object TimeCreated, ProviderName, Id, Message | ConvertTo-Json"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode == 0 and result.stdout.strip():
+            errors = json.loads(result.stdout)
+            if not isinstance(errors, list):
+                errors = [errors]
+            
+            # Truncate long messages
+            for error in errors:
+                if error.get("Message") and len(error["Message"]) > 200:
+                    error["Message"] = error["Message"][:200] + "..."
+            
+            return json.dumps({
+                "count": len(errors),
+                "period": "last 24 hours",
+                "errors": errors
+            }, indent=2)
+        
+        return json.dumps({
+            "count": 0,
+            "period": "last 24 hours",
+            "errors": [],
+            "message": "No errors found in the last 24 hours"
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def check_disk_health() -> str:
+    """
+    Check disk drive health status using SMART data
+    
+    Returns:
+    - drives: List of drives with health status
+    
+    Use when: User asks about disk health, drive failing, SMART status
+    """
+    try:
+        result = subprocess.run(
+            ["powershell", "-Command",
+             "Get-PhysicalDisk | Select-Object FriendlyName, MediaType, Size, HealthStatus, OperationalStatus | ConvertTo-Json"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode == 0 and result.stdout.strip():
+            drives = json.loads(result.stdout)
+            if not isinstance(drives, list):
+                drives = [drives]
+            
+            formatted_drives = []
+            for drive in drives:
+                size_gb = round(drive.get("Size", 0) / 1024 / 1024 / 1024, 1) if drive.get("Size") else 0
+                formatted_drives.append({
+                    "name": drive.get("FriendlyName", "Unknown"),
+                    "type": drive.get("MediaType", "Unknown"),
+                    "size_gb": size_gb,
+                    "health": drive.get("HealthStatus", "Unknown"),
+                    "status": drive.get("OperationalStatus", "Unknown")
+                })
+            
+            all_healthy = all(d["health"] == "Healthy" for d in formatted_drives)
+            
+            return json.dumps({
+                "overall_status": "healthy" if all_healthy else "warning",
+                "drive_count": len(formatted_drives),
+                "drives": formatted_drives
+            }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def get_bluetooth_devices() -> str:
+    """
+    Get connected Bluetooth devices
+    
+    Returns:
+    - devices: List of Bluetooth devices
+    - bluetooth_enabled: Whether Bluetooth is on
+    
+    Use when: User asks about Bluetooth, paired devices, wireless devices
+    """
+    try:
+        # Check if Bluetooth is enabled
+        result = subprocess.run(
+            ["powershell", "-Command",
+             "Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | "
+             "Where-Object {$_.Status -eq 'OK'} | "
+             "Select-Object FriendlyName, Status, InstanceId | ConvertTo-Json"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        devices = []
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            if not isinstance(data, list):
+                data = [data]
+            
+            for device in data:
+                name = device.get("FriendlyName", "Unknown")
+                # Skip generic Bluetooth adapters, show actual devices
+                if "Radio" not in name and "Adapter" not in name:
+                    devices.append({
+                        "name": name,
+                        "status": device.get("Status", "Unknown"),
+                        "connected": device.get("Status") == "OK"
+                    })
+        
+        # Also get paired/connected audio devices
+        result2 = subprocess.run(
+            ["powershell", "-Command",
+             "Get-PnpDevice -Class AudioEndpoint -ErrorAction SilentlyContinue | "
+             "Where-Object {$_.FriendlyName -like '*Bluetooth*' -or $_.FriendlyName -like '*Wireless*'} | "
+             "Select-Object FriendlyName, Status | ConvertTo-Json"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result2.returncode == 0 and result2.stdout.strip():
+            try:
+                audio = json.loads(result2.stdout)
+                if not isinstance(audio, list):
+                    audio = [audio]
+                for device in audio:
+                    devices.append({
+                        "name": device.get("FriendlyName", "Unknown"),
+                        "type": "audio",
+                        "status": device.get("Status", "Unknown"),
+                        "connected": device.get("Status") == "OK"
+                    })
+            except:
+                pass
+        
+        return json.dumps({
+            "device_count": len(devices),
+            "devices": devices
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 # ============================================================================
@@ -727,5 +1100,41 @@ MCP_TOOL_DEFINITIONS = [
             },
             "required": ["directory"]
         }
+    },
+    # ------------------------------------------------------------------
+    # HARDWARE & SYSTEM INFO TOOLS
+    # ------------------------------------------------------------------
+    {
+        "name": "get-system-info",
+        "description": "Get comprehensive system information including Windows version, processor, RAM, uptime. Use when user asks 'what are my specs', 'system info', 'PC details'.",
+        "function": get_system_info
+    },
+    {
+        "name": "get-gpu-usage",
+        "description": "Get GPU information and usage (supports NVIDIA with temperature/utilization, and integrated graphics). Use when user asks about graphics card, GPU, video memory.",
+        "function": get_gpu_usage
+    },
+    {
+        "name": "get-screen-info",
+        "description": "Get display/monitor information including resolution, refresh rate, and number of monitors. Use when user asks about screen, resolution, display settings.",
+        "function": get_screen_info
+    },
+    # ------------------------------------------------------------------
+    # TROUBLESHOOTING TOOLS
+    # ------------------------------------------------------------------
+    {
+        "name": "get-recent-errors",
+        "description": "Get recent Windows Event Log errors from the last 24 hours. Use when user reports issues, crashes, or wants to diagnose problems.",
+        "function": get_recent_errors
+    },
+    {
+        "name": "check-disk-health",
+        "description": "Check disk drive health status using SMART data. Use when user asks about disk health, drive status, or suspects a failing drive.",
+        "function": check_disk_health
+    },
+    {
+        "name": "get-bluetooth-devices",
+        "description": "Get connected Bluetooth devices including audio devices. Use when user asks about Bluetooth, paired devices, wireless headphones.",
+        "function": get_bluetooth_devices
     }
 ]

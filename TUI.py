@@ -20,27 +20,63 @@ async def test_agent(command: str, mode: AgentMode = AgentMode.FAST):
         command: Command to execute
         mode: Execution AgentMode (FAST or VOICE)
     """
-    load_dotenv()
+    # Try loading .env from multiple locations with fallback
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    env_locations = [
+        os.path.join(project_root, '.env'),
+        os.path.join(os.getcwd(), '.env'),
+        os.path.join(os.path.expanduser('~'), '.env'),
+        os.path.join(os.path.expanduser('~'), '.gemini', '.env'),
+    ]
     
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    for env_path in env_locations:
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+            if os.getenv("GEMINI_API_KEY"):
+                break
+    
+    # Try multiple key names (including numbered backups)
+    gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    
+    # Fallback to numbered backup keys
     if not gemini_api_key:
-        print("❌ Error: GEMINI_API_KEY not set in environment")
-        print("   Please create a .env file with your Gemini API key")
+        for i in range(1, 5):
+            gemini_api_key = os.getenv(f"GEMINI_API_KEY_{i}")
+            if gemini_api_key:
+                break
+    
+    if not gemini_api_key:
+        print("[x] Error: GEMINI_API_KEY not found")
+        print("   Searched: .env (project, cwd, home, ~/.gemini)")
+        print("   Also checked: GOOGLE_API_KEY environment variable")
         sys.exit(1)
     
     # Initialize components with LangChain + Windows-MCP
     from src.utils.ui import print_header, console, custom_theme
+    from src.utils.mcp_config import MCPConfigManager
     
-    print_header("Initializing Echo...", "Starting Windows-MCP & Gemini Connection")
+    # Load MCP configuration (same as Electron app)
+    mcp_manager = MCPConfigManager()
+    mcp_config = mcp_manager.load_config()
     
-    console.print("[dim]   (Make sure Windows-MCP server is running on http://localhost:8000)[/dim]")
+    # Show which servers are enabled
+    enabled_servers = [name for name, details in mcp_config.get("mcp_servers", {}).items() 
+                       if details.get("enabled", True)]
+    
+    print_header("Initializing Echo...", "Starting MCP & Gemini Connection")
+    
+    if enabled_servers:
+        console.print(f"[dim]   MCP Servers: {', '.join(enabled_servers)}[/dim]")
+    else:
+        console.print("[dim]   (Make sure MCP servers are running - check mcp_config.json)[/dim]")
     
     thinking_logger = ThinkingLogger()
     
     agent = DesktopAgent(
         gemini_api_key=gemini_api_key,
         thinking_logger=thinking_logger,
-        mode=mode
+        mode=mode,
+        mcp_config=mcp_config
     )
     
     import traceback
@@ -49,12 +85,12 @@ async def test_agent(command: str, mode: AgentMode = AgentMode.FAST):
     try:
         with console.status("[bold #D946EF]Connecting to Desktop...[/]", spinner="dots"):
             await agent.initialize()
-        console.print("[success]✓ Agent initialized successfully[/success]")
+        console.print("[success][+] Agent initialized successfully[/success]")
     except Exception as e:
         error_msg = str(e)
         if "TaskGroup" in error_msg or "ConnectError" in error_msg:
             # Check for connection error details
-            console.print("\n[error]❌ Connection Failed[/error]")
+            console.print("\n[error][x] Connection Failed[/error]")
             console.print("[dim]   Could not connect to Windows-MCP server at http://localhost:8000[/dim]")
             
             from rich.panel import Panel
@@ -66,7 +102,7 @@ async def test_agent(command: str, mode: AgentMode = AgentMode.FAST):
                 border_style="red"
             ))
         else:
-            console.print(f"\n[error]❌ Failed to initialize: {e}[/error]")
+            console.print(f"\n[error][x] Failed to initialize: {e}[/error]")
             console.print("[dim]Traceback available in logs[/dim]")
             
         sys.exit(1)
@@ -103,7 +139,7 @@ async def test_agent(command: str, mode: AgentMode = AgentMode.FAST):
                     # Agent Task
                     async def run_agent():
                         try:
-                            tui.add_log("✓ Agent Connected", "green")
+                            tui.add_log("[+] Agent Connected", "green")
                             tui.add_thought("Starting Voice Session...")
                             await agent.run_voice_session()
                         except asyncio.CancelledError:
@@ -127,7 +163,7 @@ async def test_agent(command: str, mode: AgentMode = AgentMode.FAST):
                 
         else:
             if not command:
-                console.print("[error]❌ Error: --command is required for fast mode[/error]")
+                console.print("[error][x] Error: --command is required for fast mode[/error]")
                 console.print("   Use [bold]--mode voice[/bold] for voice interaction")
                 return
 
@@ -152,14 +188,14 @@ async def test_agent(command: str, mode: AgentMode = AgentMode.FAST):
             ))
             
     except KeyboardInterrupt:
-        console.print("\n[dim]👋 Stopped by user[/dim]")
+        console.print("\n[dim]-- Stopped by user[/dim]")
     except Exception as e:
-        console.print(f"\n[error]❌ Error during execution: {e}[/error]")
+        console.print(f"\n[error][x] Error during execution: {e}[/error]")
     finally:
         await agent.cleanup()
         # FIX: Check for 'events' attribute, not 'logs'
         if thinking_logger.events:
-            console.print(f"\n[dim]📋 Saved trace to: agent_trace.json[/dim]")
+            console.print(f"\n[dim][>] Saved trace to: agent_trace.json[/dim]")
             thinking_logger.save_to_file("agent_trace.json")
 
 
