@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // MCP Configuration
     getMcpConfig: () => ipcRenderer.send('get-mcp-config'),
     saveMcpConfig: (config) => ipcRenderer.send('save-mcp-config', config),
+    restartApp: () => ipcRenderer.send('restart-app'),
 
     // Event listeners
     onSessionConnecting: (callback) => ipcRenderer.on('session-connecting', callback),

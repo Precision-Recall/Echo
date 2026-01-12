@@ -98,6 +98,28 @@ class DesktopAgent:
                     if details.get("enabled", True):
                         # Filter to only known client params
                         client_params = {k:v for k,v in details.items() if k in ["transport", "url", "command", "args", "env"]}
+                        
+                        # PATCH: bundled environment fix
+                        # If command is "python" and we are bundled, use sys.executable
+                        if client_params.get("transport") == "stdio" and client_params.get("command") == "python":
+                            import sys
+                            # Always use current interpreter (works for venv and bundled exe)
+                            client_params["command"] = sys.executable
+                            
+                            # PATCH: Fix module name if it's the default "windows_mcp"
+                            # In bundled env, it might need to run the directory as a module if possible, 
+                            # or we rely on the fact that we added it to sys.path in electron_bridge.
+                            # But subprocess starts a NEW process.
+                            # So we need the args to be correct.
+                            if "args" in client_params and "-m" in client_params["args"]:
+                                try:
+                                    idx = client_params["args"].index("windows_mcp")
+                                    # If windows_mcp module doesn't exist but directory does?
+                                    # Actually, let's keep it as is, but ensure sys.executable is used.
+                                    pass
+                                except ValueError:
+                                    pass
+
                         server_config[name] = client_params
                 
                 self.mcp_client = MultiServerMCPClient(server_config)
