@@ -11,7 +11,6 @@ import Link from "next/link";
 // 2. Right click > Share > Anyone with link
 // 3. Copy link, it looks like: https://drive.google.com/file/d/FILE_ID/view
 // 4. Convert to direct download: https://drive.google.com/uc?export=download&id=FILE_ID
-
 const DOWNLOAD_LINKS = {
     windows: "https://drive.google.com/uc?export=download&id=1R2lNzXbTmb5Ra9apPbXYlAwKvfFxyPHV",
     linux: "https://drive.google.com/uc?export=download&id=YOUR_LINUX_FILE_ID",

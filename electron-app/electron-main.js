@@ -318,27 +318,37 @@ ipcMain.handle('set-api-key', async (event, newKey) => {
     process.env.GEMINI_API_KEY = newKey;
 
     // RESTART Backend to apply new key
-    console.log('[Settings] Restarting backend with new key...');
-    if (pythonProcess) {
-      // Kill existing
-      if (process.platform === 'win32') {
-        const { exec } = require('child_process');
-        exec(`taskkill /pid ${pythonProcess.pid} /T /F`);
-      } else {
-        pythonProcess.kill('SIGKILL');
-      }
-      pythonProcess = null;
-    }
+    // console.log('[Settings] Restarting backend with new key...');
+    // if (pythonProcess) {
+    //   // Kill existing
+    //   if (process.platform === 'win32') {
+    //     const { exec } = require('child_process');
+    //     exec(`taskkill /pid ${pythonProcess.pid} /T /F`);
+    //   } else {
+    //     pythonProcess.kill('SIGKILL');
+    //   }
+    //   pythonProcess = null;
+    // }
 
     // Start new with updated env
-    backendReady = false;
-    startPythonBackend();
+    // backendReady = false;
+    // startPythonBackend();
 
-    return { success: true };
+    return { success: true, restartRequired: true };
   } catch (err) {
     console.error('[Settings] Error saving API key:', err);
     return { success: false, error: err.message };
   }
+});
+
+ipcMain.on('restart-app', () => {
+  if (app.isPackaged) {
+    app.relaunch();
+  } else {
+    // In dev mode, relaunch electron with the same arguments
+    app.relaunch({ args: process.argv.slice(1) });
+  }
+  app.quit();
 });
 
 // Open external URL in default browser

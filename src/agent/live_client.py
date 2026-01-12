@@ -106,9 +106,6 @@ class GeminiLiveClient:
             "output_audio_transcription": {},
             "input_audio_transcription": {},  # Required to get user's speech as text
             "enable_affective_dialog": True,
-            "thinking_config": types.ThinkingConfig(
-                thinking_budget=1024,
-            )
         }
         
         self.logger.log_thought(f"🎙️ Connecting to Gemini Live ({self.model_name})...")

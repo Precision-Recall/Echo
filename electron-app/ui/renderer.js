@@ -552,6 +552,18 @@ function init() {
         }
     }
 
+    function notifyRestartRequired() {
+        settingsStatus.className = 'settings-status success';
+        settingsStatus.style.display = 'block';
+        settingsStatus.innerHTML = 'Changes Saved! <button id="restartGenBtn" class="restart-btn">Restart App</button>';
+        const btn = document.getElementById('restartGenBtn');
+        if (btn) {
+            btn.addEventListener('click', () => {
+                if (window.electronAPI) window.electronAPI.restartApp();
+            });
+        }
+    }
+
     // Save API key
     async function saveApiKey() {
         const newKey = apiKeyInput.value.trim();
@@ -573,8 +585,20 @@ function init() {
                 const result = await window.electronAPI.setApiKey(newKey);
                 if (result.success) {
                     settingsStatus.className = 'settings-status success';
-                    settingsStatus.textContent = '✓ API key saved! Restart app to apply.';
-                    setTimeout(closeSettings, 1500);
+
+                    if (result.restartRequired) {
+                        settingsStatus.innerHTML = '✓ Saved! <button id="restartNowBtn" class="restart-btn">Restart Now</button>';
+                        const btn = document.getElementById('restartNowBtn');
+                        btn.onclick = () => {
+                            if (window.electronAPI && window.electronAPI.restartApp) {
+                                window.electronAPI.restartApp();
+                            }
+                        };
+                        // Don't auto-close if restart is needed
+                    } else {
+                        settingsStatus.textContent = '✓ API key saved!';
+                        setTimeout(closeSettings, 1500);
+                    }
                 } else {
                     settingsStatus.className = 'settings-status error';
                     settingsStatus.textContent = result.error || 'Failed to save';
@@ -709,6 +733,7 @@ function renderMCPList(config) {
                 currentMcpConfig.mcp_servers[serverName].enabled = e.target.checked;
                 renderMCPList(currentMcpConfig);
                 await window.electronAPI.saveMcpConfig(currentMcpConfig);
+                notifyRestartRequired();
             }
         });
 
@@ -720,6 +745,7 @@ function renderMCPList(config) {
                 delete currentMcpConfig.mcp_servers[serverName];
                 renderMCPList(currentMcpConfig);
                 await window.electronAPI.saveMcpConfig(currentMcpConfig);
+                notifyRestartRequired();
             }
         });
 
@@ -734,6 +760,7 @@ window.deleteMcpServer = async function (name) {
             delete currentMcpConfig.mcp_servers[name];
             renderMCPList(currentMcpConfig);
             await window.electronAPI.saveMcpConfig(currentMcpConfig);
+            notifyRestartRequired();
         }
     }
 };

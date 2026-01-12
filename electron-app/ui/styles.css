@@ -797,7 +797,25 @@ body {
     padding: 10px 14px;
     border-radius: 8px;
     font-size: 13px;
-    display: none;
+    transition: opacity 0.3s ease;
+}
+
+.restart-btn {
+    background: #7C3AED;
+    border: none;
+    color: white;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-left: 8px;
+    transition: background 0.2s;
+}
+
+.restart-btn:hover {
+    background: #6D28D9;
+
 }
 
 .settings-status.success {
