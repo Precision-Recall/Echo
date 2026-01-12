@@ -216,7 +216,7 @@ function StudentsContent({
                   ) : (
                     // Grid of Student Lists
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {studentLists.map((list) => (
+                      {studentLists.map((list: StudentList) => (
                         <StudentListCard
                           key={list.id}
                           list={list}
