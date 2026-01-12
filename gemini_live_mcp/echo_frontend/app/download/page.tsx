@@ -13,7 +13,7 @@ import Link from "next/link";
 // 4. Convert to direct download: https://drive.google.com/uc?export=download&id=FILE_ID
 
 const DOWNLOAD_LINKS = {
-    windows: "https://drive.google.com/uc?export=download&id=12CraNnmE0DSOci3ajSrYLAG0SflopMi2",
+    windows: "https://drive.google.com/uc?export=download&id=1R2lNzXbTmb5Ra9apPbXYlAwKvfFxyPHV",
     linux: "https://drive.google.com/uc?export=download&id=YOUR_LINUX_FILE_ID",
     mac: "https://drive.google.com/uc?export=download&id=YOUR_MAC_FILE_ID",
 };

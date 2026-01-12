@@ -244,7 +244,7 @@ async def create_presentation_endpoint(
                         },
                         "transform": {
                             "scaleX": 1, "scaleY": 1,
-                            "translateX": inches_to_emu(5),
+                            "translateX": inches_to_emu(5), 
                             "translateY": 0,
                             "unit": "EMU"
                         }

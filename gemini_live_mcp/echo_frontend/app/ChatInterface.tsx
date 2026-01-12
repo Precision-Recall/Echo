@@ -6,7 +6,7 @@ import { PromptInput, PromptInputActions, PromptInputAction, PromptInputTextarea
 import { Button } from "@/components/ui/button";
 import { Loader } from "@/components/ui/loader";
 import { Markdown } from "@/components/ui/markdown";
-import { ArrowUp, Square, X, History } from "lucide-react";
+import { ArrowUp, Square, X, History, BookOpen, Plus, FileText, HelpCircle } from "lucide-react";
 import { 
   ChainOfThought, 
   ChainOfThoughtContent, 
@@ -815,6 +815,15 @@ Room: ${data.room || 'N/A'}`;
     savingInProgressRef.current.clear();
   };
 
+  // Handle suggestion click - automatically submit
+  const handleSuggestionClick = (suggestion: string) => {
+    setChatInput(suggestion);
+    // Auto-submit the suggestion
+    setTimeout(() => {
+      handleChatSubmit();
+    }, 100);
+  };
+
   // Chat View
     return (
       <div className="h-full bg-white text-gray-900 flex flex-col w-full relative">
@@ -825,33 +834,35 @@ Room: ${data.room || 'N/A'}`;
           onLoadConversation={loadConversation}
         />
 
-        {/* Sticky Header - Transparent */}
-        <div className="sticky top-0 z-20 px-6 py-3">
-          <div className="flex items-center justify-between w-full">
-            {/* New Chat Button - Far Left */}
-            <button
-              onClick={handleNewChat}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 5v14M5 12h14"/>
-              </svg>
-              New Chat
-            </button>
-            
-            {/* History Button - Far Right (no background) */}
-            <button
-              onClick={() => setIsHistoryOpen(true)}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              title="Chat History"
-            >
-              <History className="w-5 h-5 text-gray-600" />
-            </button>
-          </div>
-        </div>
+        {/* Main Chat Area */}
+        <div className="flex-1 flex flex-col">
+          {/* Sticky Header - Transparent */}
+          <div className="sticky top-0 z-20 px-6 py-3">
+            <div className="flex items-center justify-between w-full">
+              {/* New Chat Button - Far Left */}
+              <button
+                onClick={handleNewChat}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 5v14M5 12h14"/>
+                </svg>
+                New Chat
+              </button>
 
-        {/* Main Content - Scrollable Area */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden px-6 pt-6 pb-48 w-full">
+              {/* History Button - Far Right (no background) */}
+              <button
+                onClick={() => setIsHistoryOpen(true)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Chat History"
+              >
+                <History className="w-5 h-5 text-gray-600" />
+              </button>
+            </div>
+          </div>
+
+          {/* Main Content - Scrollable Area */}
+          <main className="flex-1 overflow-y-auto overflow-x-hidden px-6 pt-6 pb-48 w-full">
 
 
           {messages.length === 0 ? (
@@ -988,39 +999,76 @@ Room: ${data.room || 'N/A'}`;
           )}
         </main>
 
-        {/* Fixed Bottom Input - Always at bottom, never expands */}
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-30 max-h-32">
-          <div className="max-w-3xl mx-auto px-6 py-4">
-            <PromptInput
-              value={chatInput}
-              onValueChange={setChatInput}
-              isLoading={isChatLoading}
-              onSubmit={handleChatSubmit}
-              className="w-full"
-            >
-              <PromptInputTextarea placeholder="Ask anything..." />
-              <PromptInputActions className="justify-end pt-2 gap-2">
-                <PromptInputAction
-                  tooltip={isChatLoading ? "Thinking..." : "Send message"}
-                >
-                  <Button
-                    variant="default"
-                    size="icon"
-                    className="h-8 w-8 rounded-full bg-gray-900 hover:bg-gray-800"
-                    onClick={handleChatSubmit}
-                    disabled={isChatLoading}
+        {/* Fixed Right Side Suggestions - Always visible */}
+        <div className="fixed right-6 top-1/2 transform -translate-y-1/2 z-20 flex flex-col gap-3">
+          <button
+            onClick={() => handleSuggestionClick('List my courses')}
+            className="flex items-center gap-2 px-4 py-3 rounded-full bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 hover:text-gray-800 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md whitespace-nowrap"
+            title="List my courses"
+          >
+            <BookOpen className="w-4 h-4" />
+            List my courses
+          </button>
+          <button
+            onClick={() => handleSuggestionClick('Create a course')}
+            className="flex items-center gap-2 px-4 py-3 rounded-full bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 hover:text-gray-800 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md whitespace-nowrap"
+            title="Create a course"
+          >
+            <Plus className="w-4 h-4" />
+            Create a course
+          </button>
+          <button
+            onClick={() => handleSuggestionClick('Create an Assignment')}
+            className="flex items-center gap-2 px-4 py-3 rounded-full bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 hover:text-gray-800 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md whitespace-nowrap"
+            title="Create an Assignment"
+          >
+            <FileText className="w-4 h-4" />
+            Create an Assignment
+          </button>
+          <button
+            onClick={() => handleSuggestionClick('What are you abilities?')}
+            className="flex items-center gap-2 px-4 py-3 rounded-full bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 hover:text-gray-800 transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md whitespace-nowrap"
+            title="What are you abilities?"
+          >
+            <HelpCircle className="w-4 h-4" />
+            What are you abilities?
+          </button>
+        </div>
+
+          {/* Fixed Bottom Input - Always at bottom, never expands */}
+          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-30 max-h-32">
+            <div className="max-w-3xl mx-auto px-6 py-4">
+              <PromptInput
+                value={chatInput}
+                onValueChange={setChatInput}
+                isLoading={isChatLoading}
+                onSubmit={handleChatSubmit}
+                className="w-full"
+              >
+                <PromptInputTextarea placeholder="Ask anything..." />
+                <PromptInputActions className="justify-end pt-2 gap-2">
+                  <PromptInputAction
+                    tooltip={isChatLoading ? "Thinking..." : "Send message"}
                   >
-                    {isChatLoading ? (
-                      <Square className="size-5 fill-current" />
-                    ) : (
-                      <ArrowUp className="size-5" />
-                    )}
-                  </Button>
-                </PromptInputAction>
-              </PromptInputActions>
-            </PromptInput>
+                    <Button
+                      variant="default"
+                      size="icon"
+                      className="h-8 w-8 rounded-full bg-gray-900 hover:bg-gray-800"
+                      onClick={handleChatSubmit}
+                      disabled={isChatLoading}
+                    >
+                      {isChatLoading ? (
+                        <Square className="size-5 fill-current" />
+                      ) : (
+                        <ArrowUp className="size-5" />
+                      )}
+                    </Button>
+                  </PromptInputAction>
+                </PromptInputActions>
+              </PromptInput>
+            </div>
           </div>
+        </div>
       </div>
-    </div>
-  );
+    );
 }

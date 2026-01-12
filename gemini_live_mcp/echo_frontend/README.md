@@ -141,12 +141,15 @@ npm run lint     # Run ESLint
 
 ### Deployment
 
-Echo is configured for standalone deployment (Docker, Appwrite, etc.):
+Echo is configured for standalone deployment (Docker, Vercel, etc.):
 
 ```bash
 npm run build
-# Output is in .next/standalone
+npm run start
+# Or deploy to Vercel, Netlify, or any Node.js hosting
 ```
+
+**Note:** Firebase Hosting is not configured. Echo uses Firebase only for authentication.
 
 ---
 
