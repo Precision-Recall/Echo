@@ -68,8 +68,6 @@ def build_backend():
         "--hidden-import", "mcp",
         "--hidden-import", "httpx",
         "--hidden-import", "dotenv",
-        "--hidden-import", "rich",
-        "--hidden-import", "textual",
         "--hidden-import", "pyaudio",
         "--hidden-import", "numpy",
         
@@ -81,7 +79,10 @@ def build_backend():
         "--exclude-module", "pandas",
         "--exclude-module", "scipy",
         "--exclude-module", "ipython",
+        "--exclude-module", "ipython",
         "--exclude-module", "notebook",
+        "--exclude-module", "textual",
+        "--exclude-module", "rich",
 
         
         # Console app (for debugging, can change to --windowed later)

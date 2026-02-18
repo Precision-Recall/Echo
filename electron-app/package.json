@@ -2,6 +2,7 @@
     "name": "echo-voice-assistant",
     "version": "1.0.0",
     "description": "Minimalist voice-controlled desktop assistant with Gemini Live",
+    "repository": "github:Precision-Recall/Echo",
     "main": "electron-main.js",
     "author": "ECHO Team",
     "license": "MIT",
