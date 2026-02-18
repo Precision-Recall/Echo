@@ -29,6 +29,15 @@ cd electron-app
 npm install --legacy-peer-deps
 ```
 
+### 1a. (macOS Only) Install Audio Dependencies
+
+If you are on macOS, you must install `portaudio` before installing Python dependencies:
+
+```bash
+brew install portaudio
+```
+
+
 ### 2. Create Required Files
 
 #### `public/index.html`
