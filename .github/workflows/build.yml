@@ -10,8 +10,11 @@ on:
 
 jobs:
   build-release:
-    name: Build Windows App
-    runs-on: windows-latest
+    name: Build ${{ matrix.os }} App
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
     permissions:
       contents: write
 
@@ -30,7 +33,11 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12' 
+
+      - name: Install PortAudio (macOS only)
+        if: matrix.os == 'macos-latest'
+        run: brew install portaudio
 
       - name: Create Virtual Environment & Install Dependencies
         run: |
@@ -55,20 +62,25 @@ jobs:
       # ----------------------------------------------------------------
       # 3. Build Application
       # ----------------------------------------------------------------
-      - name: Build Electron App
+      - name: Build Electron App (Windows)
+        if: matrix.os == 'windows-latest'
         working-directory: electron-app
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Activate the Python virtual environment
           ..\.venv\Scripts\Activate.ps1
-          
-          # Verify Python path and PyInstaller presence
-          Write-Host "Python Path: $(Get-Command python | Select-Object -ExpandProperty Source)"
           python -m PyInstaller --version
-          
-          # Run build (Runs 'prebuild:backend' -> 'build_backend.py' first)
-          npm run build
+          npm run build:win
+
+      - name: Build Electron App (macOS)
+        if: matrix.os == 'macos-latest'
+        working-directory: electron-app
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          source ../.venv/bin/activate
+          python -m PyInstaller --version
+          npm run build:mac
 
       # ----------------------------------------------------------------
       # 4. Create Release (Only on Tags)
@@ -77,6 +89,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: electron-app/dist/*.exe
+          files: |
+            electron-app/dist/*.exe
+            electron-app/dist/*.dmg
           generate_release_notes: true
           make_latest: true
