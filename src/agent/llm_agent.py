@@ -179,7 +179,32 @@ Be precise with coordinates and wait appropriately between actions."""
             self.logger.log_thought("✓ Agent initialized successfully")
             
         except Exception as e:
-            error_msg = f"Failed to initialize agent: {str(e)}"
+            # Try to unwrap ExceptionGroup/TaskGroup to find the root cause
+            root_error = e
+            if hasattr(e, 'exceptions'):
+                # It's an ExceptionGroup or similar
+                errors = e.exceptions
+                if errors:
+                    # Log fully but return the first meaningful error
+                    for err in errors:
+                        self.logger.log_thought(f"Checking sub-error: {type(err).__name__}: {str(err)}")
+                        
+                        # Prioritize connection errors (including ConnectError from httpx)
+                        err_str = str(err)
+                        if "Connection refused" in err_str or "ClientConnectorError" in err_str or "ConnectError" in err_str:
+                            root_error = err
+                            break
+                    
+                    if root_error == e:
+                        root_error = errors[0]
+
+            error_msg = f"Failed to initialize agent: {type(root_error).__name__}: {str(root_error)}"
+            
+            # Explicitly mention MCP if relevant
+            root_str = str(root_error)
+            if "Connection refused" in root_str or "ClientConnectorError" in root_str or "ConnectError" in root_str:
+                error_msg = f"MCP Connection Failed: {root_str}"
+                
             self.logger.log_error(error_msg)
             raise RuntimeError(error_msg)
     

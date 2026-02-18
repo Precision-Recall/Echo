@@ -116,6 +116,17 @@ function setState(newState) {
 
     // Animate waveform
     animateWaveform();
+
+    // Pulse expand button on error
+    if (newState === 'error') {
+        expandBtn.classList.add('error-pulse');
+    } else {
+        expandBtn.classList.remove('error-pulse');
+        // Also remove if manually expanded by user
+        if (expanded && newState !== 'error') {
+            expandBtn.classList.remove('error-pulse');
+        }
+    }
 }
 
 // Create a new timeline step
@@ -438,10 +449,53 @@ function handlePythonMessage(rawMessage) {
             return;
         }
 
+        // NEW: Specific MCP Connection Error
+        if (rawMessage.includes('MCP Connection Failed') || rawMessage.includes('ClientConnectorError') || rawMessage.includes('Connection refused') || rawMessage.includes('ConnectError')) {
+            if (!expanded) toggleExpand();
+
+            addStep('error', 'MCP Connection Failed');
+
+            const errorMessage = "One of the background tools (MCP) is not running.\n\n" +
+                "ACTIONS REQUIRED:\n" +
+                "1. Check if the target server is running\n" +
+                "2. Disable the failing server in Settings\n" +
+                "3. Restart the application";
+
+            addStepItem(errorMessage, true);
+            setState('error');
+            return;
+        }
+
+        // NEW: TaskGroup / Initialization Error
+        if (rawMessage.includes('TaskGroup') || rawMessage.includes('Initialization Failed')) {
+            // Auto-expand if collapsed to show the message
+            if (!expanded) {
+                toggleExpand();
+            }
+
+            addStep('error', 'Startup Failed');
+            addStepItem('We couldn\'t initialize the background services.');
+
+            // formatting the action steps
+            const actionText = "ACTIONS REQUIRED:\n\n" +
+                "1. Check your internet connection\n" +
+                "2. Verify API Keys in Settings\n" +
+                "3. Restart the application";
+
+            addStepItem(actionText, true); // Use monospace for distinct look
+
+            setState('error');
+            // Do NOT auto-reset to idle for this critical error
+            return;
+        }
+
         addStep('error', 'Error');
         addStepItem(errorMsg);
         setState('error');
-        setTimeout(() => setState('idle'), 3000);
+        // Only auto-reset for transient errors, not critical ones
+        if (!rawMessage.includes('Fatal') && !rawMessage.includes('Critical')) {
+            setTimeout(() => setState('idle'), 5000);
+        }
     }
     // Thought / THOUGHT marker
     else if (rawMessage.includes('[THOUGHT]')) {

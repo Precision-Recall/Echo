@@ -157,7 +157,11 @@ class BridgeSession:
             self.logger.log_thought("✅ Agent Initialized & MCP Connected")
             
         except Exception as e:
-            self.logger.log_error(f"Initialization Failed: {e}")
+            # If it's a known handled error from agent, just log as thought to avoid duplicate UI error bubble
+            if "MCP Connection Failed" in str(e) or "Failed to initialize agent" in str(e):
+                 self.logger.log_thought(f"Initialization sequence ended with error: {e}")
+            else:
+                 self.logger.log_error(f"Initialization Failed: {e}")
             self.agent = None
 
     async def start_session(self):

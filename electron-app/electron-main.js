@@ -36,7 +36,8 @@ function createWindow() {
     resizable: false,
     show: false,
     skipTaskbar: false,
-    hasShadow: false
+    hasShadow: false,
+    icon: path.join(__dirname, 'ui', 'icon.png')
   });
 
   // Load static HTML directly (no React)
