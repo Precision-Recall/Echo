@@ -22,9 +22,9 @@ def check_pyinstaller():
     """Ensure PyInstaller is installed"""
     try:
         import PyInstaller
-        print(f"✓ PyInstaller {PyInstaller.__version__} found")
+        print(f" PyInstaller {PyInstaller.__version__} found")
     except ImportError:
-        print("❌ PyInstaller not found!")
+        print(" PyInstaller not found!")
         print("   Please run: uv add pyinstaller")
         sys.exit(1)
 
@@ -38,7 +38,7 @@ def build_backend():
     entry_point = BACKEND_DIR / "electron_bridge.py"
     
     if not entry_point.exists():
-        print(f"❌ Entry point not found: {entry_point}")
+        print(f" Entry point not found: {entry_point}")
         sys.exit(1)
     
     # PyInstaller command
@@ -106,7 +106,7 @@ def build_backend():
     )
     
     if result.returncode != 0:
-        print("\n❌ PyInstaller build failed!")
+        print("\n PyInstaller build failed!")
         sys.exit(1)
     
     # Verify output
@@ -117,11 +117,11 @@ def build_backend():
     
     if output_exe.exists():
         size_mb = output_exe.stat().st_size / (1024 * 1024)
-        print(f"\n✅ Backend built successfully!")
+        print(f"\n Backend built successfully!")
         print(f"   Output: {output_exe}")
         print(f"   Size: {size_mb:.1f} MB")
     else:
-        print(f"\n❌ Expected output not found: {output_exe}")
+        print(f"\n Expected output not found: {output_exe}")
         sys.exit(1)
 
 def copy_env_example():
@@ -129,10 +129,10 @@ def copy_env_example():
     env_example = PROJECT_ROOT / ".env.example"
     if env_example.exists():
         shutil.copy(env_example, BACKEND_DIST / ".env.example")
-        print("✓ Copied .env.example for user configuration")
+        print(" Copied .env.example for user configuration")
 
 if __name__ == "__main__":
     check_pyinstaller()
     build_backend()
     copy_env_example()
-    print("\n🎉 Backend build complete! Run 'npm run build' for Electron packaging.")
+    print("\n Backend build complete! Run 'npm run build' for Electron packaging.")
