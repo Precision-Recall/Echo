@@ -11,6 +11,10 @@ on:
         required: false
         default: 'v1.0.0-dev'
 
+
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -76,7 +80,7 @@ jobs:
         working-directory: electron-app
         run: npm run build:electron-only -- --${{ matrix.platform }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: List build output
         working-directory: electron-app/dist
@@ -117,4 +121,4 @@ jobs:
           prerelease: false
           generate_release_notes: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
