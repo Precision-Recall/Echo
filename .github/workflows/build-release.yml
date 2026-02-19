@@ -84,6 +84,7 @@ jobs:
 
       - name: List build output
         working-directory: electron-app/dist
+        shell: bash
         run: ls -la
 
       - name: Upload artifacts
