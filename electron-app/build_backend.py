@@ -51,9 +51,9 @@ def build_backend():
         "--specpath", str(ELECTRON_APP),
         
         # Add source directories as data
-        "--add-data", f"{PROJECT_ROOT / 'src'};src",
-        "--add-data", f"{PROJECT_ROOT / 'system-diagnosis-mcp'};system-diagnosis-mcp",
-        "--add-data", f"{PROJECT_ROOT / 'Prompts'};Prompts",
+        "--add-data", f"{PROJECT_ROOT / 'src'}{os.pathsep}src",
+        "--add-data", f"{PROJECT_ROOT / 'system-diagnosis-mcp'}{os.pathsep}system-diagnosis-mcp",
+        "--add-data", f"{PROJECT_ROOT / 'Prompts'}{os.pathsep}Prompts",
         
         # Hidden imports (modules that PyInstaller might miss)
         "--hidden-import", "src.agent",
