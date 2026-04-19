@@ -61,7 +61,7 @@ class GeminiLiveClient:
         else:
             raise ValueError("Must provide either api_key OR (project_id + credentials_json)")
         
-        self.model = "gemini-2.5-flash-native-audio-preview-12-2025"
+        self.model = "gemini-2.0-flash-live-001"
         self.system_prompt = """You are a helpful, friendly AI assistant having a natural voice conversation. 
 Respond naturally and conversationally, as if talking to a friend. Keep responses concise and engaging. 
 Listen carefully and respond appropriately to what the user says. You can be interrupted at any time."""

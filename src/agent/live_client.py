@@ -146,7 +146,9 @@ class GeminiLiveClient:
         except Exception as e:
             # Graceful handling for session disconnection
             err_str = str(e).lower()
-            if "close" in err_str or "aborted" in err_str or "no close frame" in err_str:
+            if "policy violation" in err_str or "1008" in err_str:
+                self.logger.log_thought("⚠️ Session closed due to policy violation (1008) - reconnect with Alt+Space")
+            elif "close" in err_str or "aborted" in err_str or "no close frame" in err_str:
                 self.logger.log_thought("🔌 Session timed out - reconnect with Alt+Space")
             else:
                 self.logger.log_error(f"Live Session Error: {e}")
@@ -439,7 +441,10 @@ class GeminiLiveClient:
         except Exception as e:
             # Graceful handling for WebSocket disconnection
             err_str = str(e).lower()
-            if "close" in err_str or "aborted" in err_str or "no close frame" in err_str or "1007" in err_str or "1011" in err_str:
+            if "policy violation" in err_str or "1008" in err_str:
+                self.logger.log_error(f"⚠️ Gemini Policy Violation (1008): {e}")
+                self.logger.log_thought("⚠️ Connection closed due to policy violation (1008)")
+            elif "close" in err_str or "aborted" in err_str or "no close frame" in err_str or "1007" in err_str or "1011" in err_str:
                 self.logger.log_thought("🔌 Session ended (timeout or disconnect)")
             else:
                 self.logger.log_error(f"Receive error: {e}")
