@@ -9,7 +9,7 @@
     "playwright": {
       "transport": "streamable_http",
       "url": "http://localhost:8931/mcp",
-      "enabled": false
+      "enabled": true
     }
   }
 }
