@@ -24,11 +24,25 @@ from src.utils.ui import print_thought, print_action, print_observation, print_e
 class ThinkingLogger:
     """Logger for agent thinking trace"""
     
+    # Bug 15: Cap events at a rolling window to prevent unbounded memory growth
+    MAX_EVENTS = 1000
+    
     def __init__(self, ui_callback=None):
         """Initialize thinking logger"""
         self.events: List[Dict[str, Any]] = []
-        self.event_queue: asyncio.Queue = asyncio.Queue()
+        # Bug 9: Lazy queue creation -- initialized to None, created on first use
+        # inside a running event loop to avoid "attached to a different loop" errors
+        self.event_queue: asyncio.Queue = None
         self.ui_callback = ui_callback
+    
+    def _ensure_queue(self):
+        """Bug 9: Lazily create the asyncio.Queue on first use.
+        
+        All log_* callers run inside asyncio.run(), so a running loop
+        always exists at the point of first use.
+        """
+        if self.event_queue is None:
+            self.event_queue = asyncio.Queue()
         
     def _create_event(self, event_type: EventType, content: Any, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
         """Create a thinking event"""
@@ -40,14 +54,26 @@ class ThinkingLogger:
         }
         return event
     
-    def log_thought(self, message: str, metadata: Dict[str, Any] = None) -> None:
-        """Log an agent thought"""
-        event = self._create_event(EventType.THOUGHT, message, metadata)
+    def _append_event(self, event: Dict[str, Any]) -> None:
+        """Bug 15: Append event and trim to rolling window.
+        
+        Single point of change for the cap -- all log_* methods call this
+        instead of directly appending + trimming in 5 places.
+        """
         self.events.append(event)
+        if len(self.events) > self.MAX_EVENTS:
+            self.events = self.events[-self.MAX_EVENTS:]
+        
+        self._ensure_queue()
         try:
             self.event_queue.put_nowait(event)
         except asyncio.QueueFull:
             pass
+    
+    def log_thought(self, message: str, metadata: Dict[str, Any] = None) -> None:
+        """Log an agent thought"""
+        event = self._create_event(EventType.THOUGHT, message, metadata)
+        self._append_event(event)
         
         if self.ui_callback:
             self.ui_callback("thought", message)
@@ -61,11 +87,7 @@ class ThinkingLogger:
             "parameters": params
         }
         event = self._create_event(EventType.ACTION, content, metadata)
-        self.events.append(event)
-        try:
-            self.event_queue.put_nowait(event)
-        except asyncio.QueueFull:
-            pass
+        self._append_event(event)
         
         if self.ui_callback:
             self.ui_callback("action", f"{tool_name}({json.dumps(params, indent=None)})")
@@ -75,11 +97,7 @@ class ThinkingLogger:
     def log_observation(self, result: Any, metadata: Dict[str, Any] = None) -> None:
         """Log an observation"""
         event = self._create_event(EventType.OBSERVATION, result, metadata)
-        self.events.append(event)
-        try:
-            self.event_queue.put_nowait(event)
-        except asyncio.QueueFull:
-            pass
+        self._append_event(event)
         
         # Prepare message
         if isinstance(result, dict) and "success" in result:
@@ -90,7 +108,7 @@ class ThinkingLogger:
             success = True
             
         if self.ui_callback:
-            status = "✓" if success else "✗"
+            status = "+" if success else "x"
             self.ui_callback("observation", f"{status} {message}")
         else:
             print_observation(message, success)
@@ -98,11 +116,7 @@ class ThinkingLogger:
     def log_error(self, error_message: str, metadata: Dict[str, Any] = None) -> None:
         """Log an error"""
         event = self._create_event(EventType.ERROR, error_message, metadata)
-        self.events.append(event)
-        try:
-            self.event_queue.put_nowait(event)
-        except asyncio.QueueFull:
-            pass
+        self._append_event(event)
         
         if self.ui_callback:
             self.ui_callback("error", error_message)
@@ -112,17 +126,13 @@ class ThinkingLogger:
     def log_result(self, result: Any, metadata: Dict[str, Any] = None) -> None:
         """Log final result"""
         event = self._create_event(EventType.RESULT, result, metadata)
-        self.events.append(event)
-        try:
-            self.event_queue.put_nowait(event)
-        except asyncio.QueueFull:
-            pass
+        self._append_event(event)
         
         if self.ui_callback:
             self.ui_callback("result", str(result))
         else:
             from src.utils.ui import console
-            console.print(f"[bold green]✅ Result:[/bold green] {result}")
+            console.print(f"[bold green]Result:[/bold green] {result}")
     
     def get_full_trace(self) -> List[Dict[str, Any]]:
         """
@@ -140,6 +150,7 @@ class ThinkingLogger:
         Yields:
             Thinking events as they occur
         """
+        self._ensure_queue()
         while True:
             try:
                 event = await asyncio.wait_for(self.event_queue.get(), timeout=0.1)
@@ -155,11 +166,12 @@ class ThinkingLogger:
         """Clear all events"""
         self.events.clear()
         # Clear queue
-        while not self.event_queue.empty():
-            try:
-                self.event_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        if self.event_queue is not None:
+            while not self.event_queue.empty():
+                try:
+                    self.event_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
     
     def to_json(self) -> str:
         """
@@ -179,7 +191,7 @@ class ThinkingLogger:
         """
         with open(filename, 'w') as f:
             f.write(self.to_json())
-        print(f"📝 Saved thinking trace to {filename}")
+        print(f"Saved thinking trace to {filename}")
 
 
 # Example usage
@@ -194,5 +206,5 @@ if __name__ == "__main__":
     logger.log_observation({"success": True, "message": "Text typed"})
     logger.log_result("Successfully created note in Notepad")
     
-    print("\n📋 Full trace:")
+    print("\nFull trace:")
     print(logger.to_json())

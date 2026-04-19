@@ -77,7 +77,18 @@ class GeminiLiveClient:
         self._pending_transcript = ""  # Input transcript (what user said)
         self._output_transcript = ""   # Output transcript (model's echo for context)
         self._session = None  # Store session reference for speaking responses
-        self._muted = False   # Mute Voice Agent during SubAgent execution
+        
+        # Bug 1: Replace boolean _muted with asyncio.Lock for mutual exclusion
+        self._subagent_lock = asyncio.Lock()
+        
+        # Bug 7: Serialize all session.send() calls to prevent WebSocket corruption
+        self._send_lock = asyncio.Lock()
+        
+        # Bug 4: Track background graph task to cancel in-flight runs
+        self._graph_task: asyncio.Task = None
+        
+        # Bug 16: Track greeting task for cleanup on teardown
+        self._greeting_task: asyncio.Task = None
         
         # Cache for tools to avoid multiple MCP connections
         self._langchain_tools_cache = None
@@ -122,7 +133,8 @@ class GeminiLiveClient:
                 self._session = session
                 
                 # Trigger Intro Greeting IMMEDIATELY
-                asyncio.create_task(self._send_instant_greeting(session))
+                # Bug 16: Store greeting task reference for teardown cleanup
+                self._greeting_task = asyncio.create_task(self._send_instant_greeting(session))
                 
                 async with asyncio.TaskGroup() as tg:
                     tg.create_task(self._send_audio(session))
@@ -139,6 +151,12 @@ class GeminiLiveClient:
             else:
                 self.logger.log_error(f"Live Session Error: {e}")
         finally:
+            # Bug 16: Cancel orphaned greeting task on teardown
+            if self._greeting_task and not self._greeting_task.done():
+                self._greeting_task.cancel()
+            # Bug 4: Cancel any in-flight graph task
+            if self._graph_task and not self._graph_task.done():
+                self._graph_task.cancel()
             self.audio.close()
 
     async def _connect_mcp(self):
@@ -169,10 +187,9 @@ class GeminiLiveClient:
             print(f"[DEBUG] MCP CONNECTION ERROR: {e}", flush=True)
             import traceback
             traceback.print_exc()
+            # Bug 8: Remove duplicate log + assignment (was dead code)
             self.logger.log_thought(f"⚠️ MCP not available - voice only mode")
-            self.logger.log_error(f"MCP Error: {e}") # Log to UI as well
-            self.mcp_client = None
-            self.logger.log_thought(f"⚠️ MCP not available - voice only mode")
+            self.logger.log_error(f"MCP Error: {e}")
             self.mcp_client = None
 
     async def _get_genai_tools(self) -> List[Tool]:
@@ -260,7 +277,11 @@ class GeminiLiveClient:
     async def _send_instant_greeting(self, session):
         """Trigger instant greeting - runs in background for faster startup."""
         try:
-            await session.send(input="Say 'Hello! I am Echo. How can I help you?' to the user.", end_of_turn=True)
+            # Bug 7: Serialize session sends through _send_lock
+            async with self._send_lock:
+                await session.send(input="Say 'Hello! I am Echo. How can I help you?' to the user.", end_of_turn=True)
+        except asyncio.CancelledError:
+            pass  # Normal teardown
         except Exception as e:
             print(f"[ERROR] Failed to send intro: {e}", flush=True)
     
@@ -272,10 +293,12 @@ class GeminiLiveClient:
                 # Send empty audio frame to keep connection alive
                 try:
                     silence = b'\x00' * 512  # 512 bytes of silence
-                    await session.send(
-                        input={"data": silence, "mime_type": "audio/pcm"},
-                        end_of_turn=False
-                    )
+                    # Bug 7: Serialize session sends through _send_lock
+                    async with self._send_lock:
+                        await session.send(
+                            input={"data": silence, "mime_type": "audio/pcm"},
+                            end_of_turn=False
+                        )
                 except:
                     pass  # Ignore send errors during shutdown
         except asyncio.CancelledError:
@@ -288,11 +311,12 @@ class GeminiLiveClient:
                 await audio.start_recording()
                 while True:
                     chunk = await audio.get_audio_chunk()
-                    # Send raw PCM with end_of_turn=False for continuous streaming
-                    await session.send(
-                        input={"data": chunk, "mime_type": "audio/pcm"},
-                        end_of_turn=False
-                    )
+                    # Bug 7: Serialize session sends through _send_lock
+                    async with self._send_lock:
+                        await session.send(
+                            input={"data": chunk, "mime_type": "audio/pcm"},
+                            end_of_turn=False
+                        )
         except asyncio.CancelledError:
             self.logger.log_thought("Audio sending cancelled")
         except Exception as e:
@@ -314,8 +338,8 @@ class GeminiLiveClient:
             # session.receive() returns an iterator for ONE turn only
             while True:
                 async for response in session.receive():
-                    # Skip processing while muted (SubAgent executing)
-                    if self._muted:
+                    # Bug 1: Skip processing while SubAgent holds the lock
+                    if self._subagent_lock.locked():
                         continue
                         
                     # 1. Handle server content (audio/text from model)
@@ -398,12 +422,17 @@ class GeminiLiveClient:
                                     for fc in response.tool_call.function_calls
                                 ]
                                 try:
-                                    await session.send(input=LiveClientToolResponse(function_responses=dummy_responses))
+                                    # Bug 7: Serialize session sends through _send_lock
+                                    async with self._send_lock:
+                                        await session.send(input=LiveClientToolResponse(function_responses=dummy_responses))
                                 except Exception as e:
                                     self.logger.log_error(f"Failed to clear tool call: {e}")
                                 continue
                         
-                        await self._handle_tool_call(session, response.tool_call)
+                        # Bug 6: Run tool calls in background so receive loop
+                        # continues consuming messages. Safe because Bug 7's
+                        # _send_lock serializes all session.send() calls.
+                        asyncio.create_task(self._handle_tool_call(session, response.tool_call))
                         
         except asyncio.CancelledError:
             self.logger.log_thought("Receive loop cancelled")
@@ -425,8 +454,10 @@ class GeminiLiveClient:
             for tool_def in MCP_TOOL_DEFINITIONS:
                 diagnostic_tools[tool_def["name"]] = tool_def["function"]
         
-        # 1. Map available MCP tools
-        langchain_tools = await self.mcp_client.get_tools() if self.mcp_client else []
+        # Bug 11: Reuse cached tools instead of fetching on every call
+        if self._langchain_tools_cache is None and self.mcp_client:
+            self._langchain_tools_cache = await self.mcp_client.get_tools()
+        langchain_tools = self._langchain_tools_cache or []
         tool_map = {t.name: t for t in langchain_tools}
         
         function_responses = []
@@ -509,7 +540,9 @@ class GeminiLiveClient:
         # Send result back with connection error handling
         try:
             tool_response = LiveClientToolResponse(function_responses=function_responses)
-            await session.send(input=tool_response)
+            # Bug 7: Serialize session sends through _send_lock
+            async with self._send_lock:
+                await session.send(input=tool_response)
         except Exception as e:
             self.logger.log_error(f"Failed to send tool response: {e}")
     
@@ -517,43 +550,46 @@ class GeminiLiveClient:
         """
         REASONING MODE: Delegate user input to SubAgent.
         
+        Bug 1: Uses asyncio.Lock for mutual exclusion. If a second call
+        arrives while the first is still running, it will wait rather than
+        racing on mute/unmute state.
+        
         Flow:
-        1. Mute Voice Agent (stop random responses)
+        1. Acquire lock (mutes Voice Agent)
         2. Quick acknowledgement  
         3. Run SubAgent
-        4. Say "Done!" and unmute
+        4. Say "Done!" and release lock (unmutes)
         """
         self.logger.log_thought(f"🧠 Delegating to SubAgent: {transcript[:50]}...")
         
-        # MUTE Voice Agent during SubAgent execution
-        self._muted = True
-        self.audio.pause_recording()  # Stop mic to prevent noise
-        
-        try:
-            # 1. Quick acknowledgement
-            await self._speak_response(session, "On it!")
+        # Bug 1: Acquire lock -- acts as mute guard with mutual exclusion
+        async with self._subagent_lock:
+            self.audio.pause_recording()  # Stop mic to prevent noise
             
-            # 2. Run SubAgent
-            self.logger.log_thought("⚙️ SubAgent executing...")
-            result = await self.multi_agent_graph.run_for_voice(transcript)
-            
-            # 3. Simple completion acknowledgement
-            self.logger.log_thought(f"✅ SubAgent result: {result[:80]}...")
             try:
-                await self._speak_response(session, "Done!")
-            except Exception as speak_err:
-                self.logger.log_thought(f"📢 Could not speak 'Done' (session may have closed)")
-            
-        except Exception as e:
-            self.logger.log_error(f"SubAgent error: {e}")
-            try:
-                await self._speak_response(session, "Error occurred.")
-            except:
-                pass
-        finally:
-            # ALWAYS unmute after SubAgent completes
-            self._muted = False
-            self.audio.resume_recording()
+                # 1. Quick acknowledgement
+                await self._speak_response(session, "On it!")
+                
+                # 2. Run SubAgent
+                self.logger.log_thought("⚙️ SubAgent executing...")
+                result = await self.multi_agent_graph.run_for_voice(transcript)
+                
+                # 3. Simple completion acknowledgement
+                self.logger.log_thought(f"✅ SubAgent result: {result[:80]}...")
+                try:
+                    await self._speak_response(session, "Done!")
+                except Exception as speak_err:
+                    self.logger.log_thought(f"📢 Could not speak 'Done' (session may have closed)")
+                
+            except Exception as e:
+                self.logger.log_error(f"SubAgent error: {e}")
+                try:
+                    await self._speak_response(session, "Error occurred.")
+                except:
+                    pass
+            finally:
+                # Resume recording when lock is released (unmute)
+                self.audio.resume_recording()
     
     async def _route_complex_task(self, session):
         """
@@ -598,7 +634,12 @@ class GeminiLiveClient:
         self.logger.log_thought(f"🔀 Escalating to multi-agent: {transcript[:50]}...")
         
         # Run in background to avoid blocking the receive loop (which causes timeouts)
-        asyncio.create_task(self._run_graph_in_background(session, transcript))
+        # Bug 4: Cancel any in-flight graph task before starting a new one
+        if self._graph_task and not self._graph_task.done():
+            self._graph_task.cancel()
+        self._graph_task = asyncio.create_task(
+            self._run_graph_in_background(session, transcript)
+        )
         
         self.task_router.reset_failure_count()
         return True
@@ -622,7 +663,8 @@ class GeminiLiveClient:
     async def _speak_response(self, session, text: str):
         """Send text to Gemini Live to speak back to user."""
         try:
-            # Send as text message - Gemini will convert to speech
-            await session.send(input=text, end_of_turn=True)
+            # Bug 7: Serialize session sends through _send_lock
+            async with self._send_lock:
+                await session.send(input=text, end_of_turn=True)
         except Exception as e:
             self.logger.log_error(f"Failed to speak response: {e}")

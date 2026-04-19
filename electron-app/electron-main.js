@@ -71,7 +71,11 @@ function startPythonBackend() {
   if (isDev) {
     // Development mode: Use venv Python
     const pythonScript = path.join(__dirname, 'backend', 'electron_bridge.py');
-    const venvPython = path.join(projectRoot, '.venv', 'Scripts', 'python.exe');
+    // Bug 13: Cross-platform venv Python path
+    const isWin = process.platform === 'win32';
+    const venvPython = isWin
+      ? path.join(projectRoot, '.venv', 'Scripts', 'python.exe')
+      : path.join(projectRoot, '.venv', 'bin', 'python');
 
     console.log('[Python] DEV MODE - Using venv');
     console.log('[Python] Script:', pythonScript);
@@ -262,7 +266,10 @@ ipcMain.on('set-mode', (event, mode) => {
 
 // Settings IPC Handlers
 const projectRoot = path.join(__dirname, '..');
-const envPath = path.join(projectRoot, '.env');
+// Bug 14: Use userData directory for .env in packaged builds (ASAR is read-only)
+const envPath = app.isPackaged
+  ? path.join(app.getPath('userData'), '.env')
+  : path.join(projectRoot, '.env');
 
 // Get API key (returns masked version for display)
 ipcMain.handle('get-api-key', async () => {
