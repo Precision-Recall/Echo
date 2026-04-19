@@ -21,3 +21,4 @@ electron-app/*.spec
 
 # MCP
 playwright-data
+.playwright-mcp
