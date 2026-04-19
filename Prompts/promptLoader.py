@@ -60,3 +60,36 @@ class PromptLoader:
     def list_prompts(self) -> list[str]:
         """List all available prompt files"""
         return [f.name for f in self.prompts_dir.glob("*.txt")]
+    
+    def build_dynamic_tool_section(self, connected_mcp_names: list[str]) -> str:
+        """
+        Build tool context section from connected MCP skill files.
+        
+        Args:
+            connected_mcp_names: list of mcp server keys e.g. ['playwright', 'windows-mcp']
+            
+        Returns:
+            markdown string to inject into system prompt.
+        """
+        lines = ["## Available Tool Groups", ""]
+        skills_dir = self.prompts_dir.parent / "mcp_skills"
+        
+        for name in connected_mcp_names:
+            skill_file = skills_dir / f"{name}.md"
+            if skill_file.exists():
+                content = skill_file.read_text(encoding="utf-8").strip()
+                # Parse name: and abstract: lines
+                parsed = {}
+                for line in content.splitlines():
+                    if line.startswith("name:"):
+                        parsed["name"] = line.split(":", 1)[1].strip()
+                    elif line.startswith("abstract:"):
+                        parsed["abstract"] = line.split(":", 1)[1].strip()
+                if "name" in parsed and "abstract" in parsed:
+                    lines.append(f"- **{parsed['name']}**: {parsed['abstract']}")
+            else:
+                # Fallback: just list the server name
+                lines.append(f"- **{name}**: MCP server (no skill file found)")
+        
+        lines += ["", "Use tool group name as hint when selecting tools. Full tool list injected by runtime."]
+        return "\n".join(lines)

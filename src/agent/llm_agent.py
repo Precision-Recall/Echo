@@ -71,10 +71,10 @@ class DesktopAgent:
             
             # Use provided config or fallback to default
             if self.mcp_config and "mcp_servers" in self.mcp_config:
-                # Use MCPConfigManager to convert stored config to LangChain format
+                # Convert the already-loaded config directly (avoid file reload)
                 from ..utils.mcp_config import MCPConfigManager
                 manager = MCPConfigManager()
-                server_config = manager.get_langchain_config()
+                server_config = manager.convert_config_dict_to_langchain(self.mcp_config)
                 
                 if not server_config:
                     self.logger.log_thought("No enabled MCP servers found in config")
@@ -218,7 +218,7 @@ class DesktopAgent:
         
         # Determine configuration based on mode
         # Use Native Audio model for Voice Client
-        voice_model = "gemini-live-2.5-flash-native-audio"
+        voice_model = "gemini-2.5-flash-native-audio-preview-12-2025"
         
         # LOGIC:
         # FAST Mode -> LiveClient has MCP tools, executes directly.

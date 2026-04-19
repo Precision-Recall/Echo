@@ -77,8 +77,18 @@ class MCPConfigManager:
         MultiServerMCPClient.
         """
         config = self.load_config()
+        return self._convert_to_langchain_config(config)
+    
+    def convert_config_dict_to_langchain(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert an already-loaded config dict (without reloading from file).
+        Useful when config is already passed in memory.
+        """
+        return self._convert_to_langchain_config(config)
+    
+    def _convert_to_langchain_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Internal method to convert config dict to LangChain format"""
         mcp_servers = config.get("mcp_servers", {})
-        
         server_config = {}
         for name, details in mcp_servers.items():
             # Skip disabled servers
@@ -87,11 +97,11 @@ class MCPConfigManager:
             
             transport = details.get("transport", "http")
             
-            if transport == "http":
+            if transport in ("http", "streamable_http"):
                 url = details.get("url")
                 if url:
                     server_config[name] = {
-                        "transport": "http",
+                        "transport": "http",  # MultiServerMCPClient uses "http"
                         "url": url
                     }
             elif transport == "stdio":

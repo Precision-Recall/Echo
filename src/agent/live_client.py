@@ -63,7 +63,7 @@ class GeminiLiveClient:
         task_router: Optional[TaskRouter] = None,
         multi_agent_graph: Any = None  # SubAgent for REASONING mode
     ):
-        self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+        self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
         self.model_name = model_name
         self.mode = mode.lower()  # "fast" or "reasoning"
         self.mcp_client = mcp_client if self.mode == "fast" else None  # Only FAST has MCP
@@ -83,6 +83,10 @@ class GeminiLiveClient:
         
         # Bug 7: Serialize all session.send() calls to prevent WebSocket corruption
         self._send_lock = asyncio.Lock()
+        
+        # BUG FIX: Serialize browser/tool calls to prevent concurrent Playwright context corruption
+        # Playwright context cannot handle concurrent operations - they must be serialized
+        self._tool_lock = asyncio.Lock()
         
         # Bug 4: Track background graph task to cancel in-flight runs
         self._graph_task: asyncio.Task = None
@@ -104,7 +108,31 @@ class GeminiLiveClient:
         
         # 1. Get MCP Tools and convert to GenAI format
         tools = await self._get_genai_tools()
-        system_prompt = (self._prompts_dir / "echo_voice_tui.txt").read_text(encoding="utf-8").strip()
+        
+        # Load base prompt and inject dynamic tool section
+        base_prompt = (self._prompts_dir / "echo_voice_tui.txt").read_text(encoding="utf-8").strip()
+        
+        # Build dynamic tool section from connected MCPs
+        from pathlib import Path
+        prompts_parent = Path(str(self._prompts_dir).rstrip('/prompts'))
+        try:
+            from Prompts.promptLoader import PromptLoader
+            loader = PromptLoader(str(self._prompts_dir))
+            
+            # Get list of connected MCP names from mcp_client
+            connected_mcps = []
+            if self.mcp_client and hasattr(self.mcp_client, '_server_name_to_client'):
+                connected_mcps = list(self.mcp_client._server_name_to_client.keys())
+            elif self.mcp_client and hasattr(self.mcp_client, 'connections'):
+                connected_mcps = list(self.mcp_client.connections.keys())
+            
+            dynamic_section = loader.build_dynamic_tool_section(connected_mcps)
+            system_prompt = base_prompt + "\n\n" + dynamic_section
+            
+            self.logger.log_thought(f"📋 Injected tools for: {', '.join(connected_mcps) if connected_mcps else 'no MCPs'}")
+        except Exception as e:
+            print(f"[WARNING] Failed to build dynamic tool section: {e}", flush=True)
+            system_prompt = base_prompt
         # Working config pattern - simple dict
         config = {
             "response_modalities": ["AUDIO"],
@@ -116,7 +144,6 @@ class GeminiLiveClient:
             # Enable transcription - BOTH input and output
             "output_audio_transcription": {},
             "input_audio_transcription": {},  # Required to get user's speech as text
-            "enable_affective_dialog": True,
         }
         
         self.logger.log_thought(f"🎙️ Connecting to Gemini Live ({self.model_name})...")
@@ -452,103 +479,106 @@ class GeminiLiveClient:
 
     async def _handle_tool_call(self, session, tool_call):
         """Execute tool and send response"""
-        # Build map of diagnostic tools from MCP_TOOL_DEFINITIONS
-        diagnostic_tools = {}
-        if DIAGNOSTIC_TOOLS_AVAILABLE:
-            for tool_def in MCP_TOOL_DEFINITIONS:
-                diagnostic_tools[tool_def["name"]] = tool_def["function"]
-        
-        # Bug 11: Reuse cached tools instead of fetching on every call
-        if self._langchain_tools_cache is None and self.mcp_client:
-            self._langchain_tools_cache = await self.mcp_client.get_tools()
-        langchain_tools = self._langchain_tools_cache or []
-        tool_map = {t.name: t for t in langchain_tools}
-        
-        function_responses = []
-        
-        for fc in tool_call.function_calls:
-            name = fc.name
-            args = fc.args or {}
+        # BUG FIX: Serialize tool execution with lock to prevent concurrent Playwright operations
+        # Playwright page/browser context cannot handle concurrent access - must be one at a time
+        async with self._tool_lock:
+            # Build map of diagnostic tools from MCP_TOOL_DEFINITIONS
+            diagnostic_tools = {}
+            if DIAGNOSTIC_TOOLS_AVAILABLE:
+                for tool_def in MCP_TOOL_DEFINITIONS:
+                    diagnostic_tools[tool_def["name"]] = tool_def["function"]
             
-            self.logger.log_thought(f"🔧 Tool: {name}")
-            self.logger.log_action(f"Executing {name}", args)
+            # Bug 11: Reuse cached tools instead of fetching on every call
+            if self._langchain_tools_cache is None and self.mcp_client:
+                self._langchain_tools_cache = await self.mcp_client.get_tools()
+            langchain_tools = self._langchain_tools_cache or []
+            tool_map = {t.name: t for t in langchain_tools}
             
-            try:
-                # Check diagnostic tools first
-                if name in diagnostic_tools:
-                    self.logger.log_thought(f"🏥 Running diagnostic: {name}")
-                    tool_func = diagnostic_tools[name]
-                    # Execute with timeout to prevent WebSocket disconnect
+            function_responses = []
+            
+            for fc in tool_call.function_calls:
+                name = fc.name
+                args = fc.args or {}
+                
+                self.logger.log_thought(f"🔧 Tool: {name}")
+                self.logger.log_action(f"Executing {name}", args)
+                
+                try:
+                    # Check diagnostic tools first
+                    if name in diagnostic_tools:
+                        self.logger.log_thought(f"🏥 Running diagnostic: {name}")
+                        tool_func = diagnostic_tools[name]
+                        # Execute with timeout to prevent WebSocket disconnect
+                        try:
+                            if args:
+                                result = await asyncio.wait_for(
+                                    asyncio.to_thread(tool_func, **args), 
+                                    timeout=30.0
+                                )
+                            else:
+                                result = await asyncio.wait_for(
+                                    asyncio.to_thread(tool_func), 
+                                    timeout=30.0
+                                )
+                        except asyncio.TimeoutError:
+                            result = f"Tool '{name}' timed out after 30 seconds. Try a more specific path."
+                            self.logger.log_error(result)
+                        content = str(result)
+                        self.logger.log_observation(f"Result: {content[:200]}...")
+                        function_responses.append(FunctionResponse(
+                            name=name,
+                            id=fc.id,
+                            response={"result": content}
+                        ))
+                        continue
+                    
+                    # Fall back to MCP tools
+                    if name not in tool_map:
+                        raise ValueError(f"Tool {name} not found")
+                    
+                    # Execute via LangChain Tool with timeout
+                    tool = tool_map[name]
                     try:
-                        if args:
-                            result = await asyncio.wait_for(
-                                asyncio.to_thread(tool_func, **args), 
-                                timeout=30.0
-                            )
+                        if hasattr(tool, "ainvoke"):
+                            result = await asyncio.wait_for(tool.ainvoke(args), timeout=45.0)
                         else:
                             result = await asyncio.wait_for(
-                                asyncio.to_thread(tool_func), 
-                                timeout=30.0
+                                asyncio.to_thread(tool.invoke, args), 
+                                timeout=45.0
                             )
                     except asyncio.TimeoutError:
-                        result = f"Tool '{name}' timed out after 30 seconds. Try a more specific path."
+                        result = f"Tool execution timed out after 45 seconds"
                         self.logger.log_error(result)
+                    
                     content = str(result)
+                    # Truncate large results to prevent WebSocket payload errors
+                    MAX_RESULT_LENGTH = 8000
+                    if len(content) > MAX_RESULT_LENGTH:
+                        content = content[:MAX_RESULT_LENGTH] + f"... [truncated, {len(str(result))} total chars]"
                     self.logger.log_observation(f"Result: {content[:200]}...")
+                    
                     function_responses.append(FunctionResponse(
                         name=name,
                         id=fc.id,
                         response={"result": content}
                     ))
-                    continue
+                    
+                except Exception as e:
+                    self.logger.log_error(f"Tool error: {e}")
+                    function_responses.append(FunctionResponse(
+                        name=name,
+                        id=fc.id,
+                        response={"error": str(e)}
+                    ))
                 
-                # Fall back to MCP tools
-                if name not in tool_map:
-                    raise ValueError(f"Tool {name} not found")
-                
-                # Execute via LangChain Tool with timeout
-                tool = tool_map[name]
-                try:
-                    if hasattr(tool, "ainvoke"):
-                        result = await asyncio.wait_for(tool.ainvoke(args), timeout=45.0)
-                    else:
-                        result = await asyncio.wait_for(
-                            asyncio.to_thread(tool.invoke, args), 
-                            timeout=45.0
-                        )
-                except asyncio.TimeoutError:
-                    result = f"Tool execution timed out after 45 seconds"
-                    self.logger.log_error(result)
-                
-                content = str(result)
-                # Truncate large results to prevent WebSocket payload errors
-                MAX_RESULT_LENGTH = 8000
-                if len(content) > MAX_RESULT_LENGTH:
-                    content = content[:MAX_RESULT_LENGTH] + f"... [truncated, {len(str(result))} total chars]"
-                self.logger.log_observation(f"Result: {content[:200]}...")
-                
-                function_responses.append(FunctionResponse(
-                    name=name,
-                    id=fc.id,
-                    response={"result": content}
-                ))
-                
+            # Send result back with connection error handling
+            try:
+                tool_response = LiveClientToolResponse(function_responses=function_responses)
+                # Bug 7: Serialize session sends through _send_lock
+                async with self._send_lock:
+                    await session.send(input=tool_response)
             except Exception as e:
-                self.logger.log_error(f"Tool error: {e}")
-                function_responses.append(FunctionResponse(
-                    name=name,
-                    id=fc.id,
-                    response={"error": str(e)}
-                ))
-                
-        # Send result back with connection error handling
-        try:
-            tool_response = LiveClientToolResponse(function_responses=function_responses)
-            # Bug 7: Serialize session sends through _send_lock
-            async with self._send_lock:
-                await session.send(input=tool_response)
-        except Exception as e:
-            self.logger.log_error(f"Failed to send tool response: {e}")
+                self.logger.log_error(f"Failed to send tool response: {e}")
     
     async def _delegate_to_subagent(self, session, transcript: str):
         """
