@@ -16,8 +16,8 @@ from google.genai.types import (
 
 from .task_router import TaskRouter, TaskComplexity
 
-from src.agent.audio import AudioManager
-from Prompts.promptLoader import PromptLoader
+from .audio import AudioManager
+from pathlib import Path
 
 # Import granular diagnostic tools
 import sys
@@ -69,7 +69,7 @@ class GeminiLiveClient:
         self.mcp_client = mcp_client if self.mode == "fast" else None  # Only FAST has MCP
         self.logger = logger
         self.audio = AudioManager()
-        self.prompt_loader = PromptLoader("Prompts/prompts")
+        self._prompts_dir = Path(__file__).resolve().parents[2] / "Prompts" / "prompts"
         
         # Task routing for complex tasks
         self.task_router = task_router or TaskRouter(api_key)
@@ -104,7 +104,7 @@ class GeminiLiveClient:
         
         # 1. Get MCP Tools and convert to GenAI format
         tools = await self._get_genai_tools()
-        system_prompt = self.prompt_loader.load_prompt("echo_voice_tui.txt")
+        system_prompt = (self._prompts_dir / "echo_voice_tui.txt").read_text(encoding="utf-8").strip()
         # Working config pattern - simple dict
         config = {
             "response_modalities": ["AUDIO"],
