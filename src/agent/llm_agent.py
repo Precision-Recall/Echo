@@ -218,7 +218,7 @@ class DesktopAgent:
         
         # Determine configuration based on mode
         # Use Native Audio model for Voice Client
-        voice_model = "gemini-2.0-flash-live-001"
+        voice_model = "gemini-live-2.5-flash-native-audio"
         
         # LOGIC:
         # FAST Mode -> LiveClient has MCP tools, executes directly.
