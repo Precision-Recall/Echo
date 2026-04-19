@@ -89,8 +89,6 @@ GEMINI_API_KEY = load_api_key_with_fallback(project_root)
 from src.agent import DesktopAgent, ThinkingLogger, AgentMode
 from src.utils.mcp_config import MCPConfigManager
 import json
-from src.utils.mcp_config import MCPConfigManager
-import json
 
 class ElectronLogger(ThinkingLogger):
     """Logger that outputs to stdout for Electron to capture"""
@@ -198,12 +196,24 @@ class BridgeSession:
 
 async def stdin_reader(bridge):
     """Command loop"""
-    loop = asyncio.get_event_loop()
+    # Bug 5: Use get_running_loop() instead of deprecated get_event_loop()
+    loop = asyncio.get_running_loop()
     print("[READY] Backend ready", flush=True)
     
     while True:
         try:
-            line = await loop.run_in_executor(None, sys.stdin.readline)
+            # Bug 5: Wrap blocking stdin.readline with a watchdog timeout
+            # so the process does not idle indefinitely if Electron crashes
+            try:
+                line = await asyncio.wait_for(
+                    loop.run_in_executor(None, sys.stdin.readline),
+                    timeout=30.0
+                )
+            except asyncio.TimeoutError:
+                # Stdin silent for 30s -- if bridge is not running, exit
+                if not bridge.running:
+                    continue
+                continue
             if not line: break
             
             cmd = line.strip().upper()
@@ -233,8 +243,10 @@ async def stdin_reader(bridge):
                     payload = line.strip()[12:] # Remove SAVE_CONFIG prefix
                     config = json.loads(payload)
                     bridge.config_manager.save_config(config)
-                    # Force reload on next session
-                    bridge.agent = None 
+                    # Bug 12: Clean up existing agent before nullifying
+                    if bridge.agent:
+                        await bridge.agent.cleanup()
+                    bridge.agent = None  # Force reload on next session
                     print("[CONFIG] Saved", flush=True)
                 except Exception as e:
                     print(f"[ERROR] Failed to save config: {e}", flush=True)

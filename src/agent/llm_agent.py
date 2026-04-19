@@ -302,7 +302,12 @@ Be precise with coordinates and wait appropriately between actions."""
 
     async def cleanup(self):
         """Clean up resources"""
+        # Bug 12: Actually close the MCP client connections
         if self.mcp_client:
-            # MultiServerMCPClient cleanup if needed
-            pass
+            try:
+                await self.mcp_client.__aexit__(None, None, None)
+            except Exception:
+                pass
+            self.mcp_client = None
+        self.agent_executor = None
         self.logger.log_thought("Agent cleanup complete")

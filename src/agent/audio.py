@@ -23,9 +23,17 @@ class AudioManager:
         self.output_stream = None
         self.input_queue = asyncio.Queue()
         self.output_queue = queue.Queue()
-        self._is_recording = False
         self._is_playing = False
-        self._writing_active = False # Flag to track active write operation
+        
+        # Bug 2: Use threading.Event for cross-thread _is_recording flag
+        self._recording_event = threading.Event()
+        
+        # Bug 2: Use threading.Lock for cross-thread _writing_active flag
+        self._write_lock = threading.Lock()
+        self._writing_active = False
+        
+        # Bug 3: Protect output_stream reference against TOCTOU races
+        self._stream_lock = threading.Lock()
         
     async def __aenter__(self):
         return self
@@ -35,17 +43,23 @@ class AudioManager:
 
     async def start_recording(self):
         """Start capturing microphone input using callback (working pattern)"""
-        if self._is_recording:
+        if self._recording_event.is_set():
             return
 
-        self._is_recording = True
-        loop = asyncio.get_event_loop()
+        # Bug 2: Set event instead of boolean
+        self._recording_event.set()
+        # Bug 10: Use get_running_loop() instead of deprecated get_event_loop()
+        loop = asyncio.get_running_loop()
         
         def callback(in_data, frame_count, time_info, status):
-            if self._is_recording:
+            # Bug 2: Thread-safe check via Event.is_set()
+            if self._recording_event.is_set():
                 # Half-Duplex: Drop input if we are currently speaking (writing to output)
                 # or if there is pending audio in the output queue.
-                is_speaking = self._writing_active or not self.output_queue.empty()
+                # Bug 2: Thread-safe read of _writing_active via lock
+                with self._write_lock:
+                    is_writing = self._writing_active
+                is_speaking = is_writing or not self.output_queue.empty()
                 
                 if not is_speaking:
                     loop.call_soon_threadsafe(self.input_queue.put_nowait, in_data)
@@ -60,11 +74,12 @@ class AudioManager:
             stream_callback=callback
         )
         self.input_stream.start_stream()
-        print(f"✓ Recording started: {self.INPUT_RATE}Hz, chunk={self.CHUNK}")
+        print(f"Recording started: {self.INPUT_RATE}Hz, chunk={self.CHUNK}")
 
     async def stop_recording(self):
         """Stop capturing microphone input"""
-        self._is_recording = False
+        # Bug 2: Clear event instead of boolean
+        self._recording_event.clear()
         if self.input_stream:
             self.input_stream.stop_stream()
             self.input_stream.close()
@@ -72,7 +87,8 @@ class AudioManager:
     
     def pause_recording(self):
         """Pause recording without closing stream (faster resume)"""
-        self._is_recording = False
+        # Bug 2: Clear event instead of boolean
+        self._recording_event.clear()
         # Clear any pending audio
         while not self.input_queue.empty():
             try:
@@ -82,7 +98,8 @@ class AudioManager:
     
     def resume_recording(self):
         """Resume recording after pause"""
-        self._is_recording = True
+        # Bug 2: Set event instead of boolean
+        self._recording_event.set()
 
     async def get_audio_chunk(self):
         """Get next chunk of audio data from mic"""
@@ -96,12 +113,14 @@ class AudioManager:
         self._is_playing = True
         
         # Open output stream without callback (blocking mode)
-        self.output_stream = self.p.open(
-            format=self.FORMAT,
-            channels=self.CHANNELS,
-            rate=self.OUTPUT_RATE,
-            output=True,
-        )
+        # Bug 3: Protect stream creation under lock
+        with self._stream_lock:
+            self.output_stream = self.p.open(
+                format=self.FORMAT,
+                channels=self.CHANNELS,
+                rate=self.OUTPUT_RATE,
+                output=True,
+            )
         
         # Start playback thread
         self._playback_thread = threading.Thread(target=self._playback_loop, daemon=True)
@@ -109,34 +128,40 @@ class AudioManager:
     
     def _playback_loop(self):
         """Background thread for blocking audio write (matches official example)"""
-        while self._is_playing and self.output_stream:
+        while self._is_playing:
             try:
                 # Block waiting for audio data
-                # Block waiting for audio data
                 data = self.output_queue.get(timeout=0.5)
-                if data and self.output_stream:
-                    self._writing_active = True
-                    try:
-                        self.output_stream.write(data)
-                    finally:
-                        self._writing_active = False
+                # Bug 3: Hold stream lock while checking and writing to output_stream
+                with self._stream_lock:
+                    if data and self.output_stream:
+                        # Bug 2: Thread-safe write of _writing_active via lock
+                        with self._write_lock:
+                            self._writing_active = True
+                        try:
+                            self.output_stream.write(data)
+                        finally:
+                            with self._write_lock:
+                                self._writing_active = False
             except queue.Empty:
                 continue  # No data, keep waiting
             except Exception as e:
                 if self._is_playing:
-                    print(f"⚠️ Playback error: {e}")
+                    print(f"Playback error: {e}")
                 break
 
     def stop_playback(self):
         """Stop audio playback"""
         self._is_playing = False
-        if self.output_stream:
-            try:
-                self.output_stream.stop_stream()
-                self.output_stream.close()
-            except:
-                pass
-            self.output_stream = None
+        # Bug 3: Hold stream lock while closing output_stream
+        with self._stream_lock:
+            if self.output_stream:
+                try:
+                    self.output_stream.stop_stream()
+                    self.output_stream.close()
+                except:
+                    pass
+                self.output_stream = None
         # Clear queue
         while not self.output_queue.empty():
             try:
@@ -157,7 +182,7 @@ class AudioManager:
 
     def close(self):
         """Cleanup resources"""
-        print("🛑 Closing audio manager...")
+        print("Closing audio manager...")
         self.stop_playback()
         if self.input_stream:
             try:
@@ -165,4 +190,4 @@ class AudioManager:
             except:
                 pass
         self.p.terminate()
-        print("✓ Audio manager closed")
+        print("Audio manager closed")
