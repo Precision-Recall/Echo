@@ -6,7 +6,6 @@ Simplified implementation using langchain-mcp-adapters
 import os
 import asyncio
 from typing import Dict, Any
-from dotenv import load_dotenv
 from enum import Enum
 from dataclasses import dataclass
 
@@ -62,7 +61,7 @@ class DesktopAgent:
         self.current_mode = mode
         
         self.mcp_client: MultiServerMCPClient = None
-        self.agent_executor: Runnable = None
+        self.agent_executor = None
 
         
     async def initialize(self):
@@ -72,55 +71,13 @@ class DesktopAgent:
             
             # Use provided config or fallback to default
             if self.mcp_config and "mcp_servers" in self.mcp_config:
-                # Need to convert internal storage format to LangChain MCP format
-                # But wait, electron_bridge passes the raw storage config
-                from src.utils.mcp_config import MCPConfigManager
-                # Extract valid servers
-                manager = MCPConfigManager() # Temp manager to use helper? 
-                # Actually, better to just modify config here if needed, 
-                # but electron_bridge passes the raw json.
-                # We need to filter for enabled servers.
+                # Use MCPConfigManager to convert stored config to LangChain format
+                from ..utils.mcp_config import MCPConfigManager
+                manager = MCPConfigManager()
+                server_config = manager.get_langchain_config()
                 
-                # RE-READ config using manager to get clean format
-                # Or implemented helper in DesktopAgent?
-                # Best approach: Use the passed dict directly if it matches format
-                
-                # The mcp_config structure from JSON:
-                # { "mcp_servers": { "name": { "transport": "...", "enabled": true } } }
-                
-                # MultiServerMCPClient expects:
-                # { "name": { "transport": "...", "url": "..." } }
-                
-                # We interpret the passed config:
-                server_config = {}
-                servers = self.mcp_config.get("mcp_servers", {})
-                for name, details in servers.items():
-                    if details.get("enabled", True):
-                        # Filter to only known client params
-                        client_params = {k:v for k,v in details.items() if k in ["transport", "url", "command", "args", "env"]}
-                        
-                        # PATCH: bundled environment fix
-                        # If command is "python" and we are bundled, use sys.executable
-                        if client_params.get("transport") == "stdio" and client_params.get("command") == "python":
-                            import sys
-                            # Always use current interpreter (works for venv and bundled exe)
-                            client_params["command"] = sys.executable
-                            
-                            # PATCH: Fix module name if it's the default "windows_mcp"
-                            # In bundled env, it might need to run the directory as a module if possible, 
-                            # or we rely on the fact that we added it to sys.path in electron_bridge.
-                            # But subprocess starts a NEW process.
-                            # So we need the args to be correct.
-                            if "args" in client_params and "-m" in client_params["args"]:
-                                try:
-                                    idx = client_params["args"].index("windows_mcp")
-                                    # If windows_mcp module doesn't exist but directory does?
-                                    # Actually, let's keep it as is, but ensure sys.executable is used.
-                                    pass
-                                except ValueError:
-                                    pass
-
-                        server_config[name] = client_params
+                if not server_config:
+                    self.logger.log_thought("No enabled MCP servers found in config")
                 
                 self.mcp_client = MultiServerMCPClient(server_config)
                 
@@ -149,25 +106,13 @@ class DesktopAgent:
                 convert_system_message_to_human=True  
             )
             
-            # Create LangGraph agent with ReAct prompt
-            system_prompt = """You are a Windows desktop automation assistant.
-
-Available tools allow you to:
-- Get desktop state (State-Tool)
-- Launch applications (Launch-Tool)
-- Switch between apps (Switch-Tool) 
-- Type text (Type-Tool)
-- Click at coordinates (Click-Tool)
-- Press keyboard shortcuts (Shortcut-Tool)
-- Execute PowerShell commands (Powershell-Tool)
-
-Always think step-by-step:
-1. Check desktop state first if needed
-2. Plan your actions
-3. Execute actions in sequence
-4. Verify results
-
-Be precise with coordinates and wait appropriately between actions."""
+            # Load system prompt from external file
+            from pathlib import Path
+            prompt_path = Path(__file__).resolve().parents[2] / "Prompts" / "prompts" / "react_subagent.txt"
+            try:
+                system_prompt = prompt_path.read_text(encoding="utf-8").strip()
+            except FileNotFoundError:
+                system_prompt = "You are a Windows desktop automation assistant. Execute tasks step-by-step using available tools."
             
             # Create agent using LangGraph
             self.agent_executor = create_react_agent(
@@ -261,8 +206,8 @@ Be precise with coordinates and wait appropriately between actions."""
         if not self.mcp_client:
             await self.initialize()
             
-        from src.agent.live_client import GeminiLiveClient
-        from src.agent.state_graph import MultiAgentGraph
+        from .live_client import GeminiLiveClient
+        from .state_graph import MultiAgentGraph
         
         # Initialize Reasoning Agent Graph
         multi_agent_graph = MultiAgentGraph(
