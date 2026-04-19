@@ -442,8 +442,7 @@ class GeminiLiveClient:
             # Graceful handling for WebSocket disconnection
             err_str = str(e).lower()
             if "policy violation" in err_str or "1008" in err_str:
-                self.logger.log_error(f"⚠️ Gemini Policy Violation (1008): {e}")
-                self.logger.log_thought("⚠️ Connection closed due to policy violation (1008)")
+                self.logger.log_thought(f"⚠️ Connection closed due to policy violation (1008): {e}")
             elif "close" in err_str or "aborted" in err_str or "no close frame" in err_str or "1007" in err_str or "1011" in err_str:
                 self.logger.log_thought("🔌 Session ended (timeout or disconnect)")
             else:
