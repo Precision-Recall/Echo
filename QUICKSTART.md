@@ -1,58 +1,105 @@
 # 🚀 Quick Start Guide - Echo
 
-## Setup (1 minute)
+Echo ships as **two agents in one**. Follow the guide for whichever agent you want to run.
 
-1. **Add your Gemini API key** to `.env`:
-   ```bash
-   GEMINI_API_KEY=your_key_here
-   ```
+---
 
-2. **Get your API key**: [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
+## 📋 Prerequisites
 
-## Run the Agent
+| Requirement | Version | Notes |
+|---|---|---|
+| Python | 3.10+ | Required for both agents |
+| Node.js | 18+ | Required for both agents |
+| Gemini API Key | — | [Get one here](https://aistudio.google.com/app/apikey) |
+| Google OAuth credentials | — | Only for Google Automation Agent |
 
-### 1. Start Support Server
-Open a separate terminal and run:
+---
+
+## ⚙️ Common Setup (Both Agents)
+
+### 1. Clone the Repository
+```bash
+git clone https://github.com/Precision-Recall/Echo.git
+cd Echo
+```
+
+### 2. Add Your Gemini API Key
+Create a `.env` file in the root directory:
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+### 3. Install Python Dependencies
+```bash
+# With uv (recommended — faster)
+uv sync
+
+# Or with pip
+pip install -r requirements.txt
+```
+
+---
+
+## 🖥️ Desktop Voice Assistant
+
+Control your Windows PC using natural voice commands. Echo launches apps, types text, presses keyboard shortcuts, and chains multi-step workflows — all hands-free.
+
+### Step 1 — Start the Windows MCP Support Server
+Open a terminal and run (keep this window open):
 ```bash
 uvx windows-mcp --transport streamable-http --port 8000
 ```
-*(Keep this window open)*
 
-### 2. Run Commands (in new terminal)
+### Step 2 — Choose Your Interface
 
-**Test a simple command:**
+#### Option A: Electron App (Full Visual UI)
 ```bash
-uv run python main.py --command "Open Notepad"
+# Terminal 2: Start the backend
+python src/backend/main.py
+
+# Terminal 3: Start the Electron UI
+cd electron-app
+npm install
+npm start
 ```
 
-**Try more complex tasks:**
+#### Option B: Terminal Interface (TUI)
 ```bash
-uv run python main.py --command "Open Notepad and type Hello World"
+# Voice Mode — speak your commands interactively
+python TUI.py --mode voice
+
+# Command Mode — run a single task and exit
+python TUI.py --command "Open Notepad and type Hello World"
 ```
+
+### Example Commands
 
 ```bash
-uv run python main.py --command "Open Calculator"
+# Launch an app
+uv run python TUI.py --command "Open Notepad"
+
+# Multi-step workflow
+uv run python TUI.py --command "Open Notepad and type Hello World"
+
+# Launch Calculator
+uv run python TUI.py --command "Open Calculator"
 ```
 
-## What the Agent Can Do
+### What the Desktop Agent Can Do
 
-- 🎙️ **Real-time Voice Interaction** (New!)
-- ✅ Launch Windows applications (notepad, calc, mspaint, etc.)
-- ✅ Type text in focused windows
-- ✅ Press keyboard shortcuts (ctrl+s, enter, etc.)
-- ✅ Multi-step automation workflows
+| Capability | Example |
+|---|---|
+| 🎙️ Real-time voice interaction | Speak hands-free |
+| 🚀 App launching | "Open VS Code and Spotify" |
+| ⌨️ Type text | "Type Hello World in Notepad" |
+| ⌨️ Keyboard shortcuts | "Press Ctrl+S to save" |
+| 🔗 Multi-step workflows | "Open Paint, draw a circle, and save" |
+| 👁️ Screen perception | Context-aware help based on what's on screen |
 
-## How It Works
-
-1. You give a command in natural language
-2. Gemini plans the steps needed
-3. Agent executes actions (launch, type, press keys)
-4. You see the thinking trace in real-time
-
-## Example Output
+### Example Output
 
 ```
-🤖 Initializing VoiceFlow Desktop agent...
+🤖 Initializing Echo Desktop Agent...
 💭 Agent initialized
 💭 Task: Open Notepad
 
@@ -69,12 +116,96 @@ uv run python main.py --command "Open Calculator"
    Message: I've opened Notepad for you.
 ```
 
-## Next Steps
+---
 
-- Add voice input (coming soon)
-- Build Electron UI for visual control
-- Add sandbox mode for safety
+## ☁️ Google Automation Agent
+
+Automate your entire Google Workspace — Classroom, Forms, Slides, and Drive — using voice or text chat, powered by Gemini AI.
+
+### Step 1 — Set Up Google OAuth Credentials
+1. Go to [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a project and enable the following APIs:
+   - Google Classroom API
+   - Google Drive API
+   - Google Forms API
+   - Google Slides API
+3. Create **OAuth 2.0 credentials** (Desktop app type).
+4. Download `credentials.json` and place it inside `gemini_live_mcp/echo_backend/`.
+
+Add credentials to your `.env` (root directory):
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+```
+
+### Step 2 — Configure Firebase Authentication (Optional but Recommended)
+Follow `gemini_live_mcp/echo_frontend/AUTH_SETUP.md` to set up Firebase for user login.
+
+### Step 3 — Start the Backend
+
+> ⚠️ **Always start the backend BEFORE the frontend.**
+
+```bash
+cd gemini_live_mcp/echo_backend
+pip install -r requirements.txt
+python main.py
+```
+
+You should see:
+```
+INFO: Uvicorn running on http://0.0.0.0:8000
+```
+
+### Step 4 — Start the Frontend
+In a new terminal:
+```bash
+cd gemini_live_mcp/echo_frontend
+npm install
+npm run dev
+```
+
+Open **http://localhost:3000** in your browser.
+
+### What the Google Automation Agent Can Do
+
+| Google Service | Capabilities |
+|---|---|
+| 🎓 Google Classroom | Create courses, invite students, publish assignments |
+| 📝 Google Forms | Generate quizzes and feedback forms with AI |
+| 📊 Google Slides | Build presentations with AI content + images |
+| 📁 Google Drive | Upload files, attach to assignments |
+| 🎙️ Voice & Chat | Switch between voice and text at any time |
+
+### Example Voice/Chat Commands
+
+```
+"Show me all my courses"
+"Create a new course called Python 101"
+"Create an assignment for course ID 12345"
+"Generate a 10-question quiz on photosynthesis"
+"Build a presentation about climate change"
+```
+
+### How It Works
+
+1. You speak or type a command in the web UI.
+2. Gemini plans which Google API calls are needed.
+3. Echo executes the actions and shows results in real-time.
+4. You see the AI's chain of thought as it works.
 
 ---
 
-**Need help?** Check the full [README.md](README.md) for detailed documentation.
+## 🛠️ Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| `windows-mcp` not found | Run `pip install windows-mcp` or use `uvx windows-mcp` |
+| Backend won't start | Check `GEMINI_API_KEY` is set in `.env` |
+| WebSocket connection fails | Ensure backend is running before starting frontend |
+| Google API errors | Verify `credentials.json` is in `echo_backend/` and APIs are enabled |
+| Firebase auth errors | Check `lib/firebase.ts` matches your Firebase project config |
+
+---
+
+**Need more help?** See the full [README.md](README.md) or the [Gemini Live MCP README](gemini_live_mcp/README.md).
