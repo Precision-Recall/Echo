@@ -7,8 +7,9 @@
       "enabled": false
     },
     "playwright": {
-      "transport": "streamable_http",
-      "url": "http://localhost:8931/mcp",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
       "enabled": true
     },
     "diagnostic-mcp": {

@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import importlib.util
 from typing import Dict, Any, List
 
 class MCPConfigManager:
@@ -35,8 +36,9 @@ class MCPConfigManager:
                     "enabled": False
                 },
                 "playwright": {
-                    "transport": "streamable_http",
-                    "url": "http://localhost:8931/mcp",
+                    "transport": "stdio",
+                    "command": "npx",
+                    "args": ["@playwright/mcp@latest"],
                     "enabled": True
                 },
                 "diagnostic-mcp": {
@@ -114,6 +116,14 @@ class MCPConfigManager:
                 if command:
                     args = details.get("args", [])
                     env = details.get("env", None)  # Optional env vars
+
+                    # Skip stdio python module servers that are not importable.
+                    if not self._is_stdio_server_available(command, args):
+                        print(
+                            f"[MCP Config] Skipping '{name}' because its stdio target is not available in this Python environment.",
+                            flush=True,
+                        )
+                        continue
                     
                     server_config[name] = {
                         "transport": "stdio",
@@ -124,3 +134,25 @@ class MCPConfigManager:
                         server_config[name]["env"] = env
                         
         return server_config
+
+    def _is_stdio_server_available(self, command: str, args: List[str]) -> bool:
+        """
+        Best-effort validation for stdio MCP entries.
+        For Python module launchers (`python -m module_name`), ensure module exists.
+        """
+        if not command:
+            return False
+
+        normalized = command.lower()
+        is_python_cmd = normalized.endswith("python") or normalized.endswith("python.exe")
+        if not is_python_cmd:
+            return True
+
+        if not args or len(args) < 2:
+            return True
+
+        if args[0] != "-m":
+            return True
+
+        module_name = args[1]
+        return importlib.util.find_spec(module_name) is not None
