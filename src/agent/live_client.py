@@ -1,5 +1,7 @@
 import asyncio
 import base64
+import json
+import re
 from google.genai import types
 from typing import List, Any, Optional
 
@@ -36,13 +38,8 @@ except ImportError as e:
     DIAGNOSTIC_TOOLS_AVAILABLE = False
     MCP_TOOL_DEFINITIONS = []
 
-# Default MCP configuration
-MCP_CONFIG = {
-    "windows-mcp": {
-        "transport": "http",
-        "url": "http://127.0.0.1:8000/mcp",
-    }
-}
+# Default MCP configuration - loaded from mcp_config.json
+MCP_CONFIG = None
 
 class GeminiLiveClient:
     """
@@ -63,7 +60,7 @@ class GeminiLiveClient:
         task_router: Optional[TaskRouter] = None,
         multi_agent_graph: Any = None  # SubAgent for REASONING mode
     ):
-        self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+        self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
         self.model_name = model_name
         self.mode = mode.lower()  # "fast" or "reasoning"
         self.mcp_client = mcp_client if self.mode == "fast" else None  # Only FAST has MCP
@@ -76,6 +73,7 @@ class GeminiLiveClient:
         self.multi_agent_graph = multi_agent_graph
         self._pending_transcript = ""  # Input transcript (what user said)
         self._output_transcript = ""   # Output transcript (model's echo for context)
+        self._latest_user_transcript = ""
         self._session = None  # Store session reference for speaking responses
         
         # Bug 1: Replace boolean _muted with asyncio.Lock for mutual exclusion
@@ -83,6 +81,10 @@ class GeminiLiveClient:
         
         # Bug 7: Serialize all session.send() calls to prevent WebSocket corruption
         self._send_lock = asyncio.Lock()
+        
+        # BUG FIX: Serialize browser/tool calls to prevent concurrent Playwright context corruption
+        # Playwright context cannot handle concurrent operations - they must be serialized
+        self._tool_lock = asyncio.Lock()
         
         # Bug 4: Track background graph task to cancel in-flight runs
         self._graph_task: asyncio.Task = None
@@ -93,6 +95,7 @@ class GeminiLiveClient:
         # Cache for tools to avoid multiple MCP connections
         self._langchain_tools_cache = None
         self._genai_tools_cache = None
+        self._last_browser_url: Optional[str] = None
         
     async def run(self):
         """Main loop: Connect -> Audio/Tool Loop"""
@@ -104,7 +107,31 @@ class GeminiLiveClient:
         
         # 1. Get MCP Tools and convert to GenAI format
         tools = await self._get_genai_tools()
-        system_prompt = (self._prompts_dir / "echo_voice_tui.txt").read_text(encoding="utf-8").strip()
+        
+        # Load base prompt and inject dynamic tool section
+        base_prompt = (self._prompts_dir / "echo_voice_tui.txt").read_text(encoding="utf-8").strip()
+        
+        # Build dynamic tool section from connected MCPs
+        from pathlib import Path
+        prompts_parent = Path(str(self._prompts_dir).rstrip('/prompts'))
+        try:
+            from Prompts.promptLoader import PromptLoader
+            loader = PromptLoader(str(self._prompts_dir))
+            
+            # Get list of connected MCP names from mcp_client
+            connected_mcps = []
+            if self.mcp_client and hasattr(self.mcp_client, '_server_name_to_client'):
+                connected_mcps = list(self.mcp_client._server_name_to_client.keys())
+            elif self.mcp_client and hasattr(self.mcp_client, 'connections'):
+                connected_mcps = list(self.mcp_client.connections.keys())
+            
+            dynamic_section = loader.build_dynamic_tool_section(connected_mcps)
+            system_prompt = base_prompt + "\n\n" + dynamic_section
+            
+            self.logger.log_thought(f"📋 Injected tools for: {', '.join(connected_mcps) if connected_mcps else 'no MCPs'}")
+        except Exception as e:
+            print(f"[WARNING] Failed to build dynamic tool section: {e}", flush=True)
+            system_prompt = base_prompt
         # Working config pattern - simple dict
         config = {
             "response_modalities": ["AUDIO"],
@@ -116,7 +143,6 @@ class GeminiLiveClient:
             # Enable transcription - BOTH input and output
             "output_audio_transcription": {},
             "input_audio_transcription": {},  # Required to get user's speech as text
-            "enable_affective_dialog": True,
         }
         
         self.logger.log_thought(f"🎙️ Connecting to Gemini Live ({self.model_name})...")
@@ -147,7 +173,10 @@ class GeminiLiveClient:
             # Graceful handling for session disconnection
             err_str = str(e).lower()
             if "policy violation" in err_str or "1008" in err_str:
-                self.logger.log_thought("⚠️ Session closed due to policy violation (1008) - reconnect with Alt+Space")
+                self.logger.log_error("⚠️ Session closed due to policy violation (1008)")
+                self.logger.log_error("   This usually means the API key doesn't have access to Gemini Live API")
+                self.logger.log_error("   Please enable Gemini Live API in Google Cloud Console")
+                self.logger.log_error("   Reconnect with Alt+Space")
             elif "close" in err_str or "aborted" in err_str or "no close frame" in err_str:
                 self.logger.log_thought("🔌 Session timed out - reconnect with Alt+Space")
             else:
@@ -175,10 +204,21 @@ class GeminiLiveClient:
         try:
             print("[DEBUG] Importing MultiServerMCPClient...", flush=True)
             from langchain_mcp_adapters.client import MultiServerMCPClient
-            self.logger.log_thought("📡 Connecting to Windows-MCP...")
+            from ..utils.mcp_config import MCPConfigManager
+            self.logger.log_thought("📡 Connecting to MCP servers...")
             
-            print(f"[DEBUG] Connecting to MCP config: {MCP_CONFIG}", flush=True)
-            self.mcp_client = MultiServerMCPClient(MCP_CONFIG)
+            # Load config from mcp_config.json
+            manager = MCPConfigManager()
+            server_config = manager.get_langchain_config()
+            
+            if not server_config:
+                self.logger.log_thought("No enabled MCP servers found in config")
+                self.logger.log_thought("⚠️ MCP not available - voice only mode")
+                self.mcp_client = None
+                return
+                
+            print(f"[DEBUG] Connecting to MCP config: {server_config}", flush=True)
+            self.mcp_client = MultiServerMCPClient(server_config)
             
             print("[DEBUG] Fetching tools...", flush=True)
             tools = await self.mcp_client.get_tools()
@@ -236,6 +276,12 @@ class GeminiLiveClient:
                 return obj
         
         for t in langchain_tools:
+            # Playwright streamable_http in this environment can lose page state
+            # between separate browser_* tool calls. Keep browser_run_code only so
+            # browser workflows execute atomically in a single call.
+            if t.name.startswith("browser_") and t.name != "browser_run_code":
+                continue
+
             # Handle Schema
             schema = {}
             if hasattr(t, 'args_schema') and t.args_schema:
@@ -379,6 +425,11 @@ class GeminiLiveClient:
                             print(f"[DEBUG] input_transcription received: '{transcript}'", flush=True)
                             if transcript and len(transcript.strip()) > 5:
                                 self.logger.log_thought(f"🎤 You: {transcript}")
+                                chunk = transcript.strip()
+                                if self._latest_user_transcript:
+                                    self._latest_user_transcript = f"{self._latest_user_transcript} {chunk}"
+                                else:
+                                    self._latest_user_transcript = chunk
                                 
                                 # REASONING MODE: Delegate to SubAgent immediately
                                 if self.mode == "reasoning" and self.multi_agent_graph:
@@ -388,7 +439,10 @@ class GeminiLiveClient:
                                     )
                                 else:
                                     # FAST mode: Store for potential tool execution
-                                    self._pending_transcript = transcript
+                                    if self._pending_transcript:
+                                        self._pending_transcript = f"{self._pending_transcript} {chunk}"
+                                    else:
+                                        self._pending_transcript = chunk
                         
                         # Handle turn complete
                         if server_content.turn_complete:
@@ -452,103 +506,328 @@ class GeminiLiveClient:
 
     async def _handle_tool_call(self, session, tool_call):
         """Execute tool and send response"""
-        # Build map of diagnostic tools from MCP_TOOL_DEFINITIONS
-        diagnostic_tools = {}
-        if DIAGNOSTIC_TOOLS_AVAILABLE:
-            for tool_def in MCP_TOOL_DEFINITIONS:
-                diagnostic_tools[tool_def["name"]] = tool_def["function"]
-        
-        # Bug 11: Reuse cached tools instead of fetching on every call
-        if self._langchain_tools_cache is None and self.mcp_client:
-            self._langchain_tools_cache = await self.mcp_client.get_tools()
-        langchain_tools = self._langchain_tools_cache or []
-        tool_map = {t.name: t for t in langchain_tools}
-        
-        function_responses = []
-        
-        for fc in tool_call.function_calls:
-            name = fc.name
-            args = fc.args or {}
+        # BUG FIX: Serialize tool execution with lock to prevent concurrent Playwright operations
+        # Playwright page/browser context cannot handle concurrent access - must be one at a time
+        async with self._tool_lock:
+            # Build map of diagnostic tools from MCP_TOOL_DEFINITIONS
+            diagnostic_tools = {}
+            if DIAGNOSTIC_TOOLS_AVAILABLE:
+                for tool_def in MCP_TOOL_DEFINITIONS:
+                    diagnostic_tools[tool_def["name"]] = tool_def["function"]
             
-            self.logger.log_thought(f"🔧 Tool: {name}")
-            self.logger.log_action(f"Executing {name}", args)
+            # Bug 11: Reuse cached tools instead of fetching on every call
+            if self._langchain_tools_cache is None and self.mcp_client:
+                self._langchain_tools_cache = await self.mcp_client.get_tools()
+            langchain_tools = self._langchain_tools_cache or []
+            tool_map = {t.name: t for t in langchain_tools}
             
-            try:
-                # Check diagnostic tools first
-                if name in diagnostic_tools:
-                    self.logger.log_thought(f"🏥 Running diagnostic: {name}")
-                    tool_func = diagnostic_tools[name]
-                    # Execute with timeout to prevent WebSocket disconnect
-                    try:
-                        if args:
+            function_responses = []
+            
+            for fc in tool_call.function_calls:
+                name = fc.name
+                args = fc.args or {}
+                
+                self.logger.log_thought(f"🔧 Tool: {name}")
+                self.logger.log_action(f"Executing {name}", args)
+                
+                try:
+                    if name == "browser_close" and not self._user_explicitly_requested_browser_close():
+                        self.logger.log_thought("🛡️ Blocking browser_close (no explicit user request)")
+                        function_responses.append(FunctionResponse(
+                            name=name,
+                            id=fc.id,
+                            response={
+                                "result": "Ignored browser_close. Keep browser open unless user explicitly asks to close it."
+                            }
+                        ))
+                        continue
+
+                    # Check diagnostic tools first
+                    if name in diagnostic_tools:
+                        self.logger.log_thought(f"🏥 Running diagnostic: {name}")
+                        tool_func = diagnostic_tools[name]
+                        # Execute with timeout to prevent WebSocket disconnect
+                        try:
+                            if args:
+                                result = await asyncio.wait_for(
+                                    asyncio.to_thread(tool_func, **args), 
+                                    timeout=30.0
+                                )
+                            else:
+                                result = await asyncio.wait_for(
+                                    asyncio.to_thread(tool_func), 
+                                    timeout=30.0
+                                )
+                        except asyncio.TimeoutError:
+                            result = f"Tool '{name}' timed out after 30 seconds. Try a more specific path."
+                            self.logger.log_error(result)
+                        content = str(result)
+                        self.logger.log_observation(f"Result: {content[:200]}...")
+                        function_responses.append(FunctionResponse(
+                            name=name,
+                            id=fc.id,
+                            response={"result": content}
+                        ))
+                        continue
+                    
+                    # Fall back to MCP tools
+                    if name not in tool_map:
+                        raise ValueError(f"Tool {name} not found")
+
+                    # Proactive deterministic strategy for YouTube search requests.
+                    if name == "browser_run_code":
+                        query = self._extract_youtube_query(
+                            self._latest_user_transcript or self._pending_transcript or ""
+                        )
+                        if query:
+                            self.logger.log_thought(f"🎯 Using deterministic YouTube search flow for: {query}")
+                            deterministic_code = self._build_youtube_search_code(query)
+                            tool = tool_map[name]
                             result = await asyncio.wait_for(
-                                asyncio.to_thread(tool_func, **args), 
-                                timeout=30.0
+                                tool.ainvoke({"code": deterministic_code}),
+                                timeout=45.0
                             )
+                            content = str(result)
+                            self.logger.log_observation(f"Result: {content[:200]}...")
+                            function_responses.append(FunctionResponse(
+                                name=name,
+                                id=fc.id,
+                                response={"result": content}
+                            ))
+                            continue
+
+                    if name == "browser_navigate":
+                        url = args.get("url") if isinstance(args, dict) else None
+                        if isinstance(url, str) and url.strip():
+                            self._last_browser_url = url.strip()
+                    
+                    # Execute via LangChain Tool with timeout
+                    tool = tool_map[name]
+                    try:
+                        if hasattr(tool, "ainvoke"):
+                            result = await asyncio.wait_for(tool.ainvoke(args), timeout=45.0)
                         else:
                             result = await asyncio.wait_for(
-                                asyncio.to_thread(tool_func), 
-                                timeout=30.0
+                                asyncio.to_thread(tool.invoke, args), 
+                                timeout=45.0
                             )
                     except asyncio.TimeoutError:
-                        result = f"Tool '{name}' timed out after 30 seconds. Try a more specific path."
+                        result = f"Tool execution timed out after 45 seconds"
                         self.logger.log_error(result)
+                    except Exception as invoke_error:
+                        # Playwright MCP can occasionally drop page state between calls.
+                        # Recover by re-opening last URL and retrying once.
+                        recovered = False
+                        err_text = str(invoke_error)
+                        no_pages = "No open pages available" in err_text
+                        has_browser_tools = "browser_navigate" in tool_map
+
+                        if no_pages and has_browser_tools and self._last_browser_url and name in ("browser_wait_for", "browser_snapshot"):
+                            self.logger.log_thought(
+                                f"♻️ Recovering browser context for {name} by re-navigating to last URL"
+                            )
+                            nav_tool = tool_map["browser_navigate"]
+                            await asyncio.wait_for(
+                                nav_tool.ainvoke({"url": self._last_browser_url}),
+                                timeout=45.0
+                            )
+                            # Retry the original tool once after recovery.
+                            if hasattr(tool, "ainvoke"):
+                                result = await asyncio.wait_for(tool.ainvoke(args), timeout=45.0)
+                            else:
+                                result = await asyncio.wait_for(
+                                    asyncio.to_thread(tool.invoke, args),
+                                    timeout=45.0
+                                )
+                            recovered = True
+
+                        if not recovered:
+                            raise invoke_error
+                    
                     content = str(result)
+                    if name == "browser_snapshot" and "Page URL: about:blank" in content and self._last_browser_url and "browser_navigate" in tool_map:
+                        self.logger.log_thought("♻️ Snapshot returned about:blank, retrying from last URL")
+                        nav_tool = tool_map["browser_navigate"]
+                        await asyncio.wait_for(
+                            nav_tool.ainvoke({"url": self._last_browser_url}),
+                            timeout=45.0
+                        )
+                        if hasattr(tool, "ainvoke"):
+                            result = await asyncio.wait_for(tool.ainvoke(args), timeout=45.0)
+                        else:
+                            result = await asyncio.wait_for(
+                                asyncio.to_thread(tool.invoke, args),
+                                timeout=45.0
+                            )
+                        content = str(result)
+                    # Truncate large results to prevent WebSocket payload errors
+                    MAX_RESULT_LENGTH = 8000
+                    if len(content) > MAX_RESULT_LENGTH:
+                        content = content[:MAX_RESULT_LENGTH] + f"... [truncated, {len(str(result))} total chars]"
                     self.logger.log_observation(f"Result: {content[:200]}...")
+                    
                     function_responses.append(FunctionResponse(
                         name=name,
                         id=fc.id,
                         response={"result": content}
                     ))
-                    continue
+                    
+                except Exception as e:
+                    # Deterministic fallback for the common voice request:
+                    # "navigate to youtube and search for <query>".
+                    if name == "browser_run_code":
+                        try:
+                            recovered_result = await self._try_youtube_search_fallback(tool_map, str(e))
+                            if recovered_result is not None:
+                                content = str(recovered_result)
+                                self.logger.log_observation(f"Fallback result: {content[:200]}...")
+                                function_responses.append(FunctionResponse(
+                                    name=name,
+                                    id=fc.id,
+                                    response={"result": content}
+                                ))
+                                continue
+                        except Exception as fallback_error:
+                            self.logger.log_error(f"YouTube fallback failed: {fallback_error}")
+                    self.logger.log_error(f"Tool error: {e}")
+                    function_responses.append(FunctionResponse(
+                        name=name,
+                        id=fc.id,
+                        response={"error": str(e)}
+                    ))
                 
-                # Fall back to MCP tools
-                if name not in tool_map:
-                    raise ValueError(f"Tool {name} not found")
-                
-                # Execute via LangChain Tool with timeout
-                tool = tool_map[name]
-                try:
-                    if hasattr(tool, "ainvoke"):
-                        result = await asyncio.wait_for(tool.ainvoke(args), timeout=45.0)
-                    else:
-                        result = await asyncio.wait_for(
-                            asyncio.to_thread(tool.invoke, args), 
-                            timeout=45.0
-                        )
-                except asyncio.TimeoutError:
-                    result = f"Tool execution timed out after 45 seconds"
-                    self.logger.log_error(result)
-                
-                content = str(result)
-                # Truncate large results to prevent WebSocket payload errors
-                MAX_RESULT_LENGTH = 8000
-                if len(content) > MAX_RESULT_LENGTH:
-                    content = content[:MAX_RESULT_LENGTH] + f"... [truncated, {len(str(result))} total chars]"
-                self.logger.log_observation(f"Result: {content[:200]}...")
-                
-                function_responses.append(FunctionResponse(
-                    name=name,
-                    id=fc.id,
-                    response={"result": content}
-                ))
-                
+            # Send result back with connection error handling
+            try:
+                tool_response = LiveClientToolResponse(function_responses=function_responses)
+                # Bug 7: Serialize session sends through _send_lock
+                async with self._send_lock:
+                    await session.send(input=tool_response)
             except Exception as e:
-                self.logger.log_error(f"Tool error: {e}")
-                function_responses.append(FunctionResponse(
-                    name=name,
-                    id=fc.id,
-                    response={"error": str(e)}
-                ))
-                
-        # Send result back with connection error handling
-        try:
-            tool_response = LiveClientToolResponse(function_responses=function_responses)
-            # Bug 7: Serialize session sends through _send_lock
-            async with self._send_lock:
-                await session.send(input=tool_response)
-        except Exception as e:
-            self.logger.log_error(f"Failed to send tool response: {e}")
+                self.logger.log_error(f"Failed to send tool response: {e}")
+
+    def _user_explicitly_requested_browser_close(self) -> bool:
+        text = (self._latest_user_transcript or self._pending_transcript or "").lower()
+        if not text:
+            return False
+
+        close_markers = (
+            "close browser",
+            "close the browser",
+            "close youtube",
+            "close tab",
+            "close this tab",
+            "exit browser",
+            "quit browser",
+        )
+        return any(marker in text for marker in close_markers)
+
+    async def _try_youtube_search_fallback(self, tool_map: dict, error_text: str) -> Optional[dict]:
+        """Retry YouTube search with robust Playwright code when generic snippet fails."""
+        if "browser_run_code" not in tool_map:
+            return None
+
+        lowered = (error_text or "").lower()
+        retryable = any(
+            marker in lowered
+            for marker in (
+                "timeout",
+                "locator",
+                "target page, context or browser has been closed",
+                "no open pages available",
+            )
+        )
+        if not retryable:
+            return None
+
+        query = self._extract_youtube_query(self._latest_user_transcript or self._pending_transcript or "")
+        if not query:
+            return None
+
+        self.logger.log_thought(f"♻️ Retrying YouTube search with robust fallback: {query}")
+        code = self._build_youtube_search_code(query)
+        run_code_tool = tool_map["browser_run_code"]
+        result = await asyncio.wait_for(
+            run_code_tool.ainvoke({"code": code}),
+            timeout=45.0
+        )
+        return {
+            "status": "ok",
+            "strategy": "youtube_search_fallback",
+            "query": query,
+            "result": str(result)[:2000],
+        }
+
+    def _extract_youtube_query(self, transcript: str) -> Optional[str]:
+        text = (transcript or "").strip()
+        if not text:
+            return None
+
+        lowered = text.lower()
+        is_youtube_context = (
+            "youtube" in lowered
+            or "you tube" in lowered
+            or ("youtube.com" in (self._last_browser_url or "").lower())
+        )
+        if not is_youtube_context:
+            return None
+
+        patterns = [
+            r"search for\s+(.+)$",
+            r"find\s+(.+)$",
+            r"play\s+(.+)$",
+            r"for\s+(.+)$",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                query = match.group(1).strip().strip(".!?")
+                if query:
+                    return query
+
+        # If transcript itself looks like a query fragment during a YouTube flow, use it.
+        cleaned = text.strip().strip(".!?")
+        if cleaned and cleaned.lower() not in {"youtube", "open youtube", "navigate to youtube"}:
+            return cleaned
+        return None
+
+    def _build_youtube_search_code(self, query: str) -> str:
+        safe_query = json.dumps(query)
+        return (
+            "async (page) => {\n"
+            "  const query = " + safe_query + ";\n"
+            "  await page.goto('https://www.youtube.com', { waitUntil: 'domcontentloaded' });\n"
+            "  await page.waitForTimeout(2500);\n"
+            "  const consentSelectors = [\n"
+            "    'button:has-text(\"Accept all\")',\n"
+            "    'button:has-text(\"I agree\")',\n"
+            "    'button:has-text(\"Accept\")'\n"
+            "  ];\n"
+            "  for (const sel of consentSelectors) {\n"
+            "    const btn = page.locator(sel).first();\n"
+            "    if (await btn.count()) {\n"
+            "      try { await btn.click({ timeout: 1500 }); } catch (e) {}\n"
+            "      break;\n"
+            "    }\n"
+            "  }\n"
+            "  const inputSelectors = [\n"
+            "    'input#search',\n"
+            "    'input[name=\"search_query\"]',\n"
+            "    'ytd-searchbox input',\n"
+            "    'input[placeholder*=\"Search\"]'\n"
+            "  ];\n"
+            "  let input = null;\n"
+            "  for (const sel of inputSelectors) {\n"
+            "    const el = page.locator(sel).first();\n"
+            "    if (await el.count()) { input = el; break; }\n"
+            "  }\n"
+            "  if (!input) throw new Error('YouTube search input not found');\n"
+            "  await input.click({ timeout: 10000 });\n"
+            "  await input.fill(query, { timeout: 10000 });\n"
+            "  await input.press('Enter');\n"
+            "  await page.waitForURL(/results\\?search_query=/, { timeout: 15000 }).catch(() => {});\n"
+            "  return { url: page.url(), title: await page.title() };\n"
+            "}"
+        )
     
     async def _delegate_to_subagent(self, session, transcript: str):
         """

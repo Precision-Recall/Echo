@@ -71,18 +71,19 @@ class DesktopAgent:
             
             # Use provided config or fallback to default
             if self.mcp_config and "mcp_servers" in self.mcp_config:
-                # Use MCPConfigManager to convert stored config to LangChain format
+                # Convert the already-loaded config directly (avoid file reload)
                 from ..utils.mcp_config import MCPConfigManager
                 manager = MCPConfigManager()
-                server_config = manager.get_langchain_config()
+                server_config = manager.convert_config_dict_to_langchain(self.mcp_config)
                 
                 if not server_config:
                     self.logger.log_thought("No enabled MCP servers found in config")
+                    self.logger.log_thought("   Available tools will be limited to diagnostic tools only")
                 
                 self.mcp_client = MultiServerMCPClient(server_config)
                 
             else:
-                # Legacy fallback
+                # Legacy fallback - use provided mcp_url
                 self.mcp_client = MultiServerMCPClient({
                     "windows-mcp": {
                         "transport": "http",
@@ -90,13 +91,18 @@ class DesktopAgent:
                     }
                 })
             
-            # Get all available tools from Windows-MCP
-            tools = await self.mcp_client.get_tools()
-            self.logger.log_thought(f"✓ Loaded {len(tools)} tools from Windows-MCP")
-            
-            # Log available tools
-            tool_names = [tool.name for tool in tools]
-            self.logger.log_thought(f"Available tools: {', '.join(tool_names)}")
+            # Get all available tools from MCP servers
+            try:
+                tools = await self.mcp_client.get_tools()
+                self.logger.log_thought(f"✓ Loaded {len(tools)} tools from MCP servers")
+                
+                # Log available tools
+                if tools:
+                    tool_names = [tool.name for tool in tools]
+                    self.logger.log_thought(f"Available tools: {', '.join(tool_names)}")
+            except Exception as e:
+                self.logger.log_thought(f"⚠️ Could not fetch tools: {e}")
+                tools = []
             
             # Create Gemini LLM via LangChain
             llm = ChatGoogleGenerativeAI(
@@ -218,7 +224,7 @@ class DesktopAgent:
         
         # Determine configuration based on mode
         # Use Native Audio model for Voice Client
-        voice_model = "gemini-live-2.5-flash-native-audio"
+        voice_model = "gemini-2.5-flash-native-audio-preview-12-2025"
         
         # LOGIC:
         # FAST Mode -> LiveClient has MCP tools, executes directly.

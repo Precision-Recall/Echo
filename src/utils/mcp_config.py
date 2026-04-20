@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import importlib.util
 from typing import Dict, Any, List
 
 class MCPConfigManager:
@@ -30,15 +31,21 @@ class MCPConfigManager:
             "enable_diagnostic_tools": True,
             "mcp_servers": {
                 "windows-mcp": {
-                    "transport": "stdio",
-                    "command": "python",
-                    "args": ["-m", "windows_mcp"],
-                    "enabled": True
+                    "transport": "streamable_http",
+                    "url": "http://127.0.0.1:8000/mcp",
+                    "enabled": False
                 },
                 "playwright": {
-                    "transport": "streamable_http",
-                    "url": "http://localhost:8931/mcp",
-                    "enabled": False
+                    "transport": "stdio",
+                    "command": "npx",
+                    "args": ["@playwright/mcp@latest"],
+                    "enabled": True
+                },
+                "diagnostic-mcp": {
+                    "transport": "stdio",
+                    "command": "python",
+                    "args": ["-m", "system_diagnosis_mcp"],
+                    "enabled": True
                 }
             }
         }
@@ -77,8 +84,18 @@ class MCPConfigManager:
         MultiServerMCPClient.
         """
         config = self.load_config()
+        return self._convert_to_langchain_config(config)
+    
+    def convert_config_dict_to_langchain(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert an already-loaded config dict (without reloading from file).
+        Useful when config is already passed in memory.
+        """
+        return self._convert_to_langchain_config(config)
+    
+    def _convert_to_langchain_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Internal method to convert config dict to LangChain format"""
         mcp_servers = config.get("mcp_servers", {})
-        
         server_config = {}
         for name, details in mcp_servers.items():
             # Skip disabled servers
@@ -87,11 +104,11 @@ class MCPConfigManager:
             
             transport = details.get("transport", "http")
             
-            if transport == "http":
+            if transport in ("http", "streamable_http"):
                 url = details.get("url")
                 if url:
                     server_config[name] = {
-                        "transport": "http",
+                        "transport": "http",  # MultiServerMCPClient uses "http"
                         "url": url
                     }
             elif transport == "stdio":
@@ -99,6 +116,14 @@ class MCPConfigManager:
                 if command:
                     args = details.get("args", [])
                     env = details.get("env", None)  # Optional env vars
+
+                    # Skip stdio python module servers that are not importable.
+                    if not self._is_stdio_server_available(command, args):
+                        print(
+                            f"[MCP Config] Skipping '{name}' because its stdio target is not available in this Python environment.",
+                            flush=True,
+                        )
+                        continue
                     
                     server_config[name] = {
                         "transport": "stdio",
@@ -109,3 +134,25 @@ class MCPConfigManager:
                         server_config[name]["env"] = env
                         
         return server_config
+
+    def _is_stdio_server_available(self, command: str, args: List[str]) -> bool:
+        """
+        Best-effort validation for stdio MCP entries.
+        For Python module launchers (`python -m module_name`), ensure module exists.
+        """
+        if not command:
+            return False
+
+        normalized = command.lower()
+        is_python_cmd = normalized.endswith("python") or normalized.endswith("python.exe")
+        if not is_python_cmd:
+            return True
+
+        if not args or len(args) < 2:
+            return True
+
+        if args[0] != "-m":
+            return True
+
+        module_name = args[1]
+        return importlib.util.find_spec(module_name) is not None
