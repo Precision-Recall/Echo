@@ -247,5 +247,5 @@ Echo is currently a private research project. Contributions are limited to the c
 ---
 
 <div align="center">
-  <sub>Built with <img src="https://api.iconify.design/lucide:heart.svg" width="12" /> by the Echo Team. Powered by Google DeepMind.</sub>
+  <sub>Built with <img src="https://api.iconify.design/lucide:heart.svg" width="12" /> by Precision and Recall.</sub>
 </div>
