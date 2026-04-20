@@ -36,13 +36,8 @@ except ImportError as e:
     DIAGNOSTIC_TOOLS_AVAILABLE = False
     MCP_TOOL_DEFINITIONS = []
 
-# Default MCP configuration
-MCP_CONFIG = {
-    "windows-mcp": {
-        "transport": "http",
-        "url": "http://127.0.0.1:8000/mcp",
-    }
-}
+# Default MCP configuration - loaded from mcp_config.json
+MCP_CONFIG = None
 
 class GeminiLiveClient:
     """
@@ -147,7 +142,10 @@ class GeminiLiveClient:
             # Graceful handling for session disconnection
             err_str = str(e).lower()
             if "policy violation" in err_str or "1008" in err_str:
-                self.logger.log_thought("⚠️ Session closed due to policy violation (1008) - reconnect with Alt+Space")
+                self.logger.log_error("⚠️ Session closed due to policy violation (1008)")
+                self.logger.log_error("   This usually means the API key doesn't have access to Gemini Live API")
+                self.logger.log_error("   Please enable Gemini Live API in Google Cloud Console")
+                self.logger.log_error("   Reconnect with Alt+Space")
             elif "close" in err_str or "aborted" in err_str or "no close frame" in err_str:
                 self.logger.log_thought("🔌 Session timed out - reconnect with Alt+Space")
             else:
@@ -175,10 +173,21 @@ class GeminiLiveClient:
         try:
             print("[DEBUG] Importing MultiServerMCPClient...", flush=True)
             from langchain_mcp_adapters.client import MultiServerMCPClient
-            self.logger.log_thought("📡 Connecting to Windows-MCP...")
+            from ..utils.mcp_config import MCPConfigManager
+            self.logger.log_thought("📡 Connecting to MCP servers...")
             
-            print(f"[DEBUG] Connecting to MCP config: {MCP_CONFIG}", flush=True)
-            self.mcp_client = MultiServerMCPClient(MCP_CONFIG)
+            # Load config from mcp_config.json
+            manager = MCPConfigManager()
+            server_config = manager.get_langchain_config()
+            
+            if not server_config:
+                self.logger.log_thought("No enabled MCP servers found in config")
+                self.logger.log_thought("⚠️ MCP not available - voice only mode")
+                self.mcp_client = None
+                return
+                
+            print(f"[DEBUG] Connecting to MCP config: {server_config}", flush=True)
+            self.mcp_client = MultiServerMCPClient(server_config)
             
             print("[DEBUG] Fetching tools...", flush=True)
             tools = await self.mcp_client.get_tools()

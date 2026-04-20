@@ -78,11 +78,12 @@ class DesktopAgent:
                 
                 if not server_config:
                     self.logger.log_thought("No enabled MCP servers found in config")
+                    self.logger.log_thought("   Available tools will be limited to diagnostic tools only")
                 
                 self.mcp_client = MultiServerMCPClient(server_config)
                 
             else:
-                # Legacy fallback
+                # Legacy fallback - use provided mcp_url
                 self.mcp_client = MultiServerMCPClient({
                     "windows-mcp": {
                         "transport": "http",
@@ -90,13 +91,18 @@ class DesktopAgent:
                     }
                 })
             
-            # Get all available tools from Windows-MCP
-            tools = await self.mcp_client.get_tools()
-            self.logger.log_thought(f"✓ Loaded {len(tools)} tools from Windows-MCP")
-            
-            # Log available tools
-            tool_names = [tool.name for tool in tools]
-            self.logger.log_thought(f"Available tools: {', '.join(tool_names)}")
+            # Get all available tools from MCP servers
+            try:
+                tools = await self.mcp_client.get_tools()
+                self.logger.log_thought(f"✓ Loaded {len(tools)} tools from MCP servers")
+                
+                # Log available tools
+                if tools:
+                    tool_names = [tool.name for tool in tools]
+                    self.logger.log_thought(f"Available tools: {', '.join(tool_names)}")
+            except Exception as e:
+                self.logger.log_thought(f"⚠️ Could not fetch tools: {e}")
+                tools = []
             
             # Create Gemini LLM via LangChain
             llm = ChatGoogleGenerativeAI(
